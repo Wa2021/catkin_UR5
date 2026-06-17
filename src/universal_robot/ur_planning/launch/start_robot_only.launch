@@ -1,0 +1,209 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ================================================================================
+       UR5 机械臂 + Robotiq HandE 夹爪 - 真实机器人控制启动文件
+       ================================================================================
+       
+       功能说明：
+       1. 上传包含 UR5 + HandE 夹爪的完整机器人模型（URDF）
+       2. 启动 UR5 机器人驱动（ur_modern_driver）
+       3. 启动 HandE 夹爪驱动（通过 Robotiq URCap）
+       4. 发布夹爪关节状态（解决 MoveIt 关节缺失问题）
+       5. 启动 MoveIt 运动规划和执行
+       6. 启动 RViz 可视化界面
+       
+       使用方法：
+       roslaunch ur_planning start_robot_only.launch robot_ip:=192.168.0.1
+       
+       前提条件：
+       - UR5 机器人已开机并通过网络连接
+       - 能够 ping 通机器人：ping 192.168.0.1
+       - UR 示教器上已安装并启用 Robotiq URCap
+       - HandE 夹爪已正确连接到 UR 控制箱的工具端口
+       - 机器人处于远程控制模式（示教器上启用外部控制）
+       
+       ================================================================================ -->
+
+  <!-- ==================== 参数配置 ==================== -->
+  
+  <!-- 机器人连接参数 -->
+  <arg name="robot_ip" default="192.168.0.1" doc="UR5 机器人的 IP 地址"/>
+  <arg name="limited" default="true" doc="是否限制关节角度范围到 [-PI, PI]"/>
+  <arg name="min_payload" default="0.0" doc="最小负载重量 (kg)"/>
+  <arg name="max_payload" default="5.0" doc="最大负载重量 (kg)，包括夹爪和工件"/>
+  <arg name="prefix" default="" doc="TF 坐标系名称前缀（通常为空）"/>
+
+  <!-- 可视化参数 -->
+  <arg name="start_rviz" default="true" doc="是否启动 RViz 可视化界面"/>
+
+  <!-- Robotiq HandE 夹爪参数 -->
+  <arg name="start_gripper" default="true" doc="是否启动夹爪驱动"/>
+  <arg name="gripper_ip" default="$(arg robot_ip)" doc="夹爪控制器 IP（通常与机器人 IP 相同）"/>
+  <arg name="gripper_port" default="63352" doc="Robotiq URCap 通信端口（固定值）"/>
+
+  <!-- ==================== 1. 上传机器人描述文件（URDF）==================== -->
+  <!--
+       加载包含 UR5 + HandE 夹爪 + RealSense 相机的完整机器人模型
+       URDF 文件路径：ur_description/urdf/ur5_gripper_joint_limited_robot.urdf.xacro
+       
+       机器人模型包含：
+       - UR5 机械臂（6 个关节）
+       - HandE 夹爪（2 个手指关节）
+       - RealSense D435 相机（可选）
+  -->
+  <include file="$(find ur_description)/launch/ur5_with_gripper_upload.launch">
+    <arg name="limited" value="$(arg limited)"/>
+  </include>
+
+  <!-- ==================== 2. 启动 UR 机器人驱动 ==================== -->
+  <!--
+       ur_common.launch 启动以下组件：
+       - ur_driver 节点：通过 socket（端口 30003）与 UR 机器人实时通信
+       - follow_joint_trajectory action server：接收 MoveIt 的轨迹命令并执行
+       
+       重要说明：
+       - 不能使用 ur5_bringup.launch，因为它会上传标准 UR5 URDF（不含夹爪）
+       - 我们需要保持步骤 1 中上传的带夹爪 URDF
+  -->
+  <include file="$(find ur_modern_driver)/launch/ur_common.launch">
+    <arg name="prefix" value="$(arg prefix)"/>
+    <arg name="robot_ip" value="$(arg robot_ip)"/>
+    <arg name="min_payload" value="$(arg min_payload)"/>
+    <arg name="max_payload" value="$(arg max_payload)"/>
+  </include>
+
+  <!-- ==================== 3. 发布机器人状态 ==================== -->
+  <!--
+       robot_state_publisher 负责：
+       - 监听 /joint_states 话题（机器人和夹爪的关节角度）
+       - 根据 URDF 模型计算所有 link 的位姿
+       - 发布 TF 变换（base -> shoulder -> elbow -> ... -> gripper）
+       
+       这样 RViz 和 MoveIt 就能知道机器人各部分的实时位置
+       
+       注意：ur_common.launch 已经启动了 robot_state_publisher，
+       所以这里不需要重复启动
+  -->
+  <!-- 已在 ur_common.launch 中启动
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  -->
+
+  <!-- ==================== 4. 启动 Robotiq HandE 夹爪驱动 ==================== -->
+  <!--
+       gripper_node.py 功能：
+       - 通过 TCP Socket（端口 63352）连接到 UR 的 Robotiq URCap
+       - URCap 作为中间层，将 ROS 命令转换为夹爪控制协议
+       - 提供 ROS Service：/gripper_service
+       
+       Service 接口：
+       rosservice call /gripper_service "position: 0-255, speed: 0-255, force: 0-255"
+       - position: 0=完全打开, 255=完全闭合
+       - speed: 移动速度（越大越快）
+       - force: 抓取力度（越大力度越大）
+       
+       使用示例：
+       # 打开夹爪
+       rosservice call /gripper_service "position: 0, speed: 255, force: 100"
+       # 闭合夹爪
+       rosservice call /gripper_service "position: 255, speed: 255, force: 100"
+  -->
+  <node if="$(arg start_gripper)" 
+        name="gripper_node" 
+        pkg="robotiq_hande_ros_driver" 
+        type="gripper_node.py" 
+        output="screen">
+    <param name="robot_ip" value="$(arg gripper_ip)"/>
+  </node>
+
+  <!-- ==================== 5. 发布夹爪关节状态 ==================== -->
+  <!--
+       gripper_joint_state_publisher.py 功能：
+       - 发布 HandE 夹爪的关节状态到 /joint_states 话题
+       - 关节名称：hande_left_finger_joint, hande_right_finger_joint
+       - 发布频率：50 Hz
+       
+       重要性：
+       - MoveIt 需要接收所有关节的状态才能工作
+       - 如果缺少夹爪关节状态，会报错："Missing hande_left_finger_joint"
+       
+       更新（2025-10-09）：
+       - 此节点已被禁用！
+       - gripper_node.py 现在直接读取夹爪真实位置并发布
+       - 这样 RViz 可以显示夹爪的实时状态
+  -->
+  <!-- 已禁用：gripper_node.py 现在负责发布夹爪关节状态
+  <node if="$(arg start_gripper)" 
+        name="hande_joint_state_publisher" 
+        pkg="robotiq_hande_ros_driver" 
+        type="gripper_joint_state_publisher.py" 
+        output="screen"/>
+  -->
+
+  <!-- ==================== 6. 启动 MoveIt 运动规划 ==================== -->
+  <!--
+       move_group.launch 启动 MoveIt 核心组件：
+       - move_group 节点：运动规划和执行的中心节点
+       - OMPL 规划器：路径规划算法（RRT、PRM 等）
+       - 碰撞检测：避免机器人自碰撞和环境碰撞
+       - 轨迹执行：通过 follow_joint_trajectory 发送到机器人
+       
+       关键参数：
+       - load_robot_description=false：不重复加载 URDF（已在步骤 1 加载）
+       - allow_trajectory_execution=true：允许执行规划的轨迹
+       - fake_execution=false：使用真实机器人执行（不是仿真）
+       
+       提供的规划组（Planning Groups）：
+       1. manipulator：UR5 机械臂的 6 个关节
+          - shoulder_pan_joint
+          - shoulder_lift_joint
+          - elbow_joint
+          - wrist_1_joint
+          - wrist_2_joint
+          - wrist_3_joint
+       
+       2. gripper：HandE 夹爪的 2 个手指关节
+          - hande_left_finger_joint
+          - hande_right_finger_joint
+       
+       在 RViz 中：
+       - 选择 "manipulator" 规划组来控制机械臂
+       - 选择 "gripper" 规划组来控制夹爪开合
+  -->
+  <include file="$(find ur5_gripper_moveit_config)/launch/move_group.launch">
+    <arg name="load_robot_description" value="false"/>
+    <arg name="allow_trajectory_execution" value="true"/>
+    <arg name="fake_execution" value="false"/>
+  </include>
+
+  <!-- ==================== 7. 启动 RViz 可视化 ==================== -->
+  <!--
+       RViz 提供图形界面，可以：
+       - 查看机器人实时状态
+       - 拖动交互式标记设置目标位姿
+       - 规划运动轨迹
+       - 执行规划好的轨迹
+       - 可视化碰撞对象和工作空间
+       
+       使用自定义的 RViz 配置文件：
+       - 路径：ur5_gripper_moveit_config/config/moveit.rviz
+       - 包含 RobotModel 显示（显示机器人外观）
+       - 包含 MotionPlanning 插件（规划和执行界面）
+       - Fixed Frame 设置为 "base"
+       
+       RViz 操作说明：
+       1. Planning Group 下拉框：选择 "manipulator" 或 "gripper"
+       2. 拖动蓝色/橙色球形标记：设置目标位姿
+       3. Planning 标签页：
+          - 点击 "Plan"：仅规划路径，不执行
+          - 点击 "Execute"：执行上次规划的路径
+          - 点击 "Plan and Execute"：规划并立即执行
+       4. Joints 标签页：
+          - 拖动滑块手动设置各关节角度
+          - 适合精确控制或测试单个关节
+  -->
+  <include if="$(arg start_rviz)" 
+           file="$(find ur5_gripper_moveit_config)/launch/moveit_rviz.launch">
+    <arg name="rviz_config" value="$(find ur5_gripper_moveit_config)/config/moveit.rviz"/>
+  </include>
+
+</launch>

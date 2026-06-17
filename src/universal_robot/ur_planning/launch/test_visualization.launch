@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ========================================
+       UR5 + HandE 夹爪 - 仿真/测试模式
+       ========================================
+       用于在没有真实机器人时测试可视化和 MoveIt 规划
+       使用 joint_state_publisher_gui 手动控制关节
+       ======================================== -->
+
+  <arg name="limited" default="true" doc="是否限制关节角度范围"/>
+  <arg name="gui" default="true" doc="是否启动 joint_state_publisher GUI"/>
+  <arg name="start_rviz" default="true" doc="是否启动 RViz"/>
+
+  <!-- 1. 上传机器人描述文件（URDF） -->
+  <include file="$(find ur_description)/launch/ur5_with_gripper_upload.launch">
+    <arg name="limited" value="$(arg limited)"/>
+  </include>
+
+  <!-- 2. 发布 TF 变换（从 joint_states 到 TF） -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
+  <!-- 3. Joint State Publisher（发布关节状态） -->
+  <!-- GUI 模式：可以手动拖动滑块控制关节 -->
+  <node if="$(arg gui)" name="joint_state_publisher" pkg="joint_state_publisher_gui" type="joint_state_publisher_gui">
+    <rosparam param="source_list">[move_group/fake_controller_joint_states]</rosparam>
+  </node>
+  
+  <!-- 无 GUI 模式：发布零位置 -->
+  <node unless="$(arg gui)" name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher">
+    <rosparam param="source_list">[move_group/fake_controller_joint_states]</rosparam>
+  </node>
+
+  <!-- 4. 启动 MoveIt -->
+  <include file="$(find ur5_gripper_moveit_config)/launch/move_group.launch">
+    <arg name="load_robot_description" value="false"/>
+    <arg name="allow_trajectory_execution" value="true"/>
+    <arg name="fake_execution" value="true"/>  <!-- 使用假的执行器 -->
+    <arg name="info" value="true"/>
+  </include>
+
+  <!-- 5. 启动 RViz -->
+  <include if="$(arg start_rviz)" file="$(find ur5_gripper_moveit_config)/launch/moveit_rviz.launch">
+    <arg name="rviz_config" value="$(find ur5_gripper_moveit_config)/launch/moveit.rviz"/>
+  </include>
+
+</launch>

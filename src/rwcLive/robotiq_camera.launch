@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ================================================================================
+       Robotiq 腕部相机启动文件
+       ================================================================================
+       
+       功能：启动 Robotiq 腕部相机节点，发布图像到 ROS
+       
+       使用方法：
+       roslaunch rwcLive robotiq_camera.launch robot_ip:=192.168.0.1
+       
+       发布的 Topics:
+       - /robotiq_camera/image_raw (sensor_msgs/Image)
+       - /robotiq_camera/camera_info (sensor_msgs/CameraInfo)
+       
+       查看图像：
+       rosrun image_view image_view image:=/robotiq_camera/image_raw
+       
+       或使用 rqt:
+       rqt_image_view
+       
+       ================================================================================ -->
+
+  <!-- 机器人 IP 地址 -->
+  <arg name="robot_ip" default="192.168.0.1" 
+       doc="UR 机器人的 IP 地址（相机通过机器人连接）"/>
+  
+  <!-- 相机端口 -->
+  <arg name="camera_port" default="4242" 
+       doc="Robotiq 相机 HTTP 端口"/>
+  
+  <!-- 发布频率 -->
+  <arg name="publish_rate" default="10" 
+       doc="图像发布频率 (Hz)"/>
+  
+  <!-- 坐标系名称 -->
+  <arg name="frame_id" default="robotiq_camera_optical_frame" 
+       doc="相机坐标系名称"/>
+  
+  <!-- 是否启动图像查看器 -->
+  <arg name="show_image" default="false" 
+       doc="是否自动启动图像查看器"/>
+
+  <!-- 启动 Robotiq 相机节点 -->
+  <node name="robotiq_camera_node" 
+        pkg="rwcLive" 
+        type="robotiq_camera_node.py" 
+        output="screen">
+    <param name="robot_ip" value="$(arg robot_ip)"/>
+    <param name="camera_port" value="$(arg camera_port)"/>
+    <param name="publish_rate" value="$(arg publish_rate)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+  </node>
+
+  <!-- 可选：启动图像查看器 -->
+  <node if="$(arg show_image)" 
+        name="robotiq_camera_viewer" 
+        pkg="image_view" 
+        type="image_view" 
+        args="image:=/robotiq_camera/image_raw" 
+        output="screen">
+    <param name="autosize" value="true"/>
+  </node>
+
+</launch>

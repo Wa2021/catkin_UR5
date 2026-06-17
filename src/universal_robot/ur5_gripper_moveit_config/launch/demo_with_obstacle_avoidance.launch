@@ -1,0 +1,21 @@
+<launch>
+  <include file="$(find ur5_gripper_moveit_config)/launch/demo.launch" />
+
+  <!-- Play the rosbag that contains the pointcloud data -->
+  <!--node pkg="moveit_tutorials" type="bag_publisher_maintain_time" name="point_clouds" /-->
+
+  <include file="$(find realsense2_camera)/launch/demo_pointcloud.launch" />
+
+  <!-- Run the detection and adding cylinder node -->
+  <!--node pkg="moveit_tutorials" type="cylinder_segment" name="point_cloud_preprocessor" /-->
+<!-- 快照控制节点 -->
+  <node pkg="ur5_gripper_moveit_config" type="snapshot_control.py" name="snapshot_controller" output="screen" />
+
+  <!-- If needed, broadcast static tf for robot root -->
+  <!-- 注释掉：demo中已经有了相机的变换关系，故不需要再写了，原作者要写是因为他是眼在手外
+      因为URDF中已经定义了ee_link到camera_color_optical_frame的变换链，
+      添加static_transform_publisher会造成TF循环 -->
+  <!--node pkg="tf2_ros" type="static_transform_publisher" name="camera_to_robot" 
+        args="0.025800 0.094141 -0.137501 0.024330 0.024989 0.999377 -0.005394 camera_color_optical_frame ee_link" /-->
+
+</launch>

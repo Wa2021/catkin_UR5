@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="ur5_gripper" >
+
+  <xacro:arg name="transmission_hw_interface" default="hardware_interface/PositionJointInterface"/>
+
+  <!-- common stuff -->
+  <xacro:include filename="$(find ur_description)/urdf/common.gazebo.xacro" />
+
+  <!-- ur5 -->
+  <xacro:include filename="$(find ur_description)/urdf/ur5.urdf.xacro" />
+
+  <!-- arm -->
+  <xacro:ur5_robot prefix="" joint_limited="true"
+    shoulder_pan_lower_limit="${-pi}" shoulder_pan_upper_limit="${pi}"
+    shoulder_lift_lower_limit="${-pi}" shoulder_lift_upper_limit="${pi}"
+    elbow_joint_lower_limit="${-pi}" elbow_joint_upper_limit="${pi}"
+    wrist_1_lower_limit="${-pi}" wrist_1_upper_limit="${pi}"
+    wrist_2_lower_limit="${-pi}" wrist_2_upper_limit="${pi}"
+    wrist_3_lower_limit="${-pi}" wrist_3_upper_limit="${pi}"
+    transmission_hw_interface="$(arg transmission_hw_interface)"
+  />
+  
+  <!--gripper-->
+  <xacro:include filename="$(find ur5e_with_robotiq_hande)/urdf/robotiq_hande_gripper.urdf.xacro" />
+
+  <link name="world" />
+
+  <joint name="world_joint" type="fixed">
+    <parent link="world" />
+    <child link = "base_link" />
+    <origin xyz="0.0 0.0 0" rpy="0.0 0.0 0.0" />
+  </joint>
+
+  <xacro:robotiq_hande_gripper prefix="" parent="tool0" />
+  
+  <!--camera RealSense D435-->
+  <xacro:include filename="$(find realsense2_description)/urdf/_d435.urdf.xacro" />
+  
+  <!-- 
+  相机挂载说明（RealSense D435）：
+  手眼标定输出矩阵 T_ee_co = ee_link -> camera_color_optical_frame
+  
+  D435 内部坐标系链：
+    ee_link -> camera_bottom_screw_frame (我们在下面配置的)
+    -> camera_link (偏移 0.0106, 0.0175, 0.0125)
+    -> camera_color_frame (偏移 0, 0.015, 0)
+    -> camera_color_optical_frame (旋转 -π/2, 0, -π/2)
+  
+  以下参数由 calculate_d435_transform.py 脚本计算得出
+  基于手眼标定结果和 D435 的实际内部偏移
+  -->
+  <xacro:sensor_d435 parent="ee_link" use_nominal_extrinsics="true" add_plug="false" use_mesh="true">
+    <origin xyz="-0.00702218 0.08081448 -0.14586459" rpy="-2.364168892 -1.501028288 0.804166628"/>
+  </xacro:sensor_d435>
+  
+  <!-- 
+  验证方法：
+  rosrun tf tf_echo ee_link camera_color_optical_frame
+  期望输出应接近手眼标定矩阵：
+    平移: [0.0258, 0.0941, -0.1375] m
+    RPY: [0.049, 0.050, -3.092] rad 或 [2.8°, 2.8°, -177.2°]
+  允许误差：< 1mm, < 0.1°
+  -->
+  
+</robot>

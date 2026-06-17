@@ -1,0 +1,11 @@
+<launch>
+  <!-- 传感器配置 -->
+  <rosparam command="load" file="$(find ur5_gripper_moveit_config)/config/sensors_3d.yaml" />
+
+  <!-- MoveIt OctoMap 配置 - 提高精度用于快照模式 -->
+  <param name="octomap_resolution" type="double" value="0.005" />   <!-- 5mm精度 -->
+  <param name="max_range" type="double" value="1.3" />             <!-- 合理的全局范围 -->
+
+  <arg name="moveit_sensor_manager" default="ur5_gripper" />
+  <include file="$(find ur5_gripper_moveit_config)/launch/$(arg moveit_sensor_manager)_moveit_sensor_manager.launch.xml" />
+</launch>

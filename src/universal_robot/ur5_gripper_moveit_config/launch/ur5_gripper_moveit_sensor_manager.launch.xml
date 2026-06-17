@@ -1,0 +1,4 @@
+<launch>
+  <!-- 指定八叉树地图发布的坐标系 -->
+  <param name="camera_link" type="string" value="base_link" />
+</launch>

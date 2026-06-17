@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 眼在手YOLO避障抓取系统 -->
+  <!-- 使用方法: source /opt/ros/noetic/setup.bash && roslaunch ur5_gripper_moveit_config eye_in_hand_yolo_grasp.launch -->
+  <!-- 
+  系统架构（v2.0）：
+  1. snapshot_controller: 统一管理相机数据流，8秒后自动冻结
+  2. pointcloud_target_filter: 根据YOLO结果过滤目标物体的点云
+     - 无YOLO数据时：转发原始点云（包含所有物体）
+     - 有YOLO数据时：移除目标物体，仅保留障碍物点云
+  3. MoveIt Octomap: 使用过滤后的点云自动生成障碍物
+  4. yolo_moveit_detector: 需要在arm_grasp环境中单独启动
+  
+  启动顺序：
+  1. 先启动此launch文件（基础系统）
+  2. 再启动yolo_moveit_detector.py（检测功能）
+  -->
+  
+  <!-- 启动MoveIt -->
+  <include file="$(find ur5_gripper_moveit_config)/launch/demo.launch" />
+  
+  <!-- 启动RealSense相机 -->
+  <include file="$(find realsense2_camera)/launch/demo_pointcloud.launch" />
+  
+  <!-- 快照控制节点 - 管理相机数据流 -->
+  <node pkg="ur5_gripper_moveit_config" type="snapshot_control.py" name="snapshot_controller" output="screen">
+    <!-- 启用自动冻结功能 - 10秒后自动停止相机数据更新 -->
+    <param name="auto_freeze_enabled" value="false" />
+    <param name="freeze_delay" value="10.0" />
+  </node>
+  
+  <!-- 点云目标过滤器 - 移除目标物体的点云 -->
+  <node pkg="ur5_gripper_moveit_config" type="pointcloud_target_filter.py" name="pointcloud_target_filter" output="screen">
+    <!-- 过滤参数配置 -->
+    <param name="filter_enabled" value="true" />
+    <param name="target_expand_factor" value="1.3" />
+    <param name="min_depth" value="0.1" />
+    <param name="max_depth" value="2.0" />
+  </node>
+  
+  <!-- 点云障碍物管理器 - 可选组件，通常依靠MoveIt octomap自动处理 -->
+  <!-- 如果需要更精细的障碍物控制，可以启用此节点 -->
+  <!--
+  <node pkg="ur5_gripper_moveit_config" type="pointcloud_obstacle_manager.py" name="pointcloud_obstacle_manager" output="screen">
+    <param name="robot_frame" value="base_link" />
+    <param name="camera_frame" value="camera_color_optical_frame" />
+    <param name="voxel_size" value="0.01" />
+    <param name="min_cluster_size" value="50" />
+    <param name="update_rate" value="2.0" />
+  </node>
+  -->
+  
+  <!-- 加载配置文件 -->
+  <rosparam file="$(find ur5_gripper_moveit_config)/config/eye_in_hand_grasp_config.yaml" command="load" />
+  
+  <!-- YOLO与MoveIt集成检测器 -->
+  <node pkg="ur5_gripper_moveit_config" type="yolo_moveit_detector.py" name="yolo_moveit_detector" output="screen">
+    <!-- YOLO模型路径 -->
+    <param name="model_path" value="$(find ur5_gripper_moveit_config)/../../../models/yolov8n.pt" />
+    
+    <!-- 基本配置 -->
+    <param name="detection_confidence" value="0.5" />
+    <!-- 关闭内置自动冻结，使用snapshot_controller统一管理 -->
+    <param name="enable_auto_freeze" value="false" />
+    
+    <!-- 障碍物生成模式：blacklist = 除目标物体外都是障碍物 -->
+    <param name="obstacle_mode" value="blacklist" />
+    
+    <!-- 目标物体配置（不会生成障碍物） -->
+    <rosparam param="target_objects">['keyboard']</rosparam>
+    
+    <!-- 可选：白名单模式下的障碍物列表（当前使用黑名单模式，此参数无效） -->
+    <rosparam param="obstacle_objects">['person', 'laptop', 'book', 'chair', 'mouse', 'keyboard', 'cell phone', 'remote', 'backpack', 'cup', 'bottle', 'tv', 'monitor']</rosparam>
+  </node>
+  
+  <!-- 检测结果图像查看器 -->
+  <node pkg="image_view" type="image_view" name="yolo_detection_viewer" output="screen">
+    <remap from="image" to="/yolo/detection_image"/>
+    <param name="autosize" value="true"/>
+    <param name="window_name" value="YOLO Detection Results"/>
+  </node>
+
+</launch>

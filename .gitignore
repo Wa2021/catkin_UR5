@@ -1,0 +1,45 @@
+# Catkin build outputs
+/build/
+/devel/
+/install/
+/logs/
+/.catkin_tools/
+/src/out/build/
+
+# ROS runtime data
+/.ros/
+*.bag
+*.bag.active
+*.db3
+
+# IDE/editor metadata and indexes
+.vscode/
+.idea/
+.vs/
+*.vc.db
+*.VC.db
+*.suo
+*.user
+*.cache
+
+# Python/C++ build caches
+__pycache__/
+*.py[cod]
+*.o
+*.so
+*.a
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Generated logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# Large ML/checkpoint files: keep commented unless you decide to host models elsewhere.
+# *.pt
+# *.pth
+# *.onnx

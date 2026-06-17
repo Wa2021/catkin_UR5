@@ -1,0 +1,77 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- UR real robot bringup with integrated camera (RealSense) + Robotiq Hand-E gripper.
+       This uses the integrated URDF/xacro (ur5_gripper_joint_limited_robot.urdf.xacro)
+       that already contains the Hand-E and D415 frames and the calibrated camera pose. -->
+
+  <!-- Robot connection -->
+  <arg name="robot_ip" default="192.168.0.1"/>
+  <arg name="limited" default="true"/>
+  <arg name="min_payload" default="0.0"/>
+  <arg name="max_payload" default="5.0"/>
+  <arg name="prefix" default=""/>
+
+  <!-- Visualization -->
+  <arg name="start_rviz" default="true"/>
+  <!-- Optional: auto move to initial pose after startup (safety: off by default) -->
+  <arg name="auto_move_to_grasp" default="false"/>
+  <arg name="auto_move_delay" default="5"/>
+
+  <!-- Camera (RealSense) -->
+  <arg name="start_camera" default="true"/>
+  <arg name="camera_serial" default=""/>
+  <arg name="align_depth" default="true"/>
+
+  <!-- Robotiq Hand-E (2F) via URCap TCP server
+       If you use URCap on the UR controller, the gripper server is exposed on the UR's IP and port 63352.
+       If you use a direct Modbus adaptor to the gripper, adapt IP/port accordingly. -->
+  <arg name="start_gripper" default="true"/>
+  <arg name="gripper_ip" default="$(arg robot_ip)"/>
+  <arg name="gripper_port" default="63352"/>
+  <arg name="use_gripper_action_server" default="true"/>
+  <arg name="gripper_name" default="gripper"/>
+
+  <!-- Upload robot_description that includes UR5 + Hand-E + RealSense with calibrated pose -->
+  <include file="$(find ur_description)/launch/ur5_with_gripper_upload.launch">
+    <arg name="limited" value="$(arg limited)"/>
+  </include>
+
+  <!-- UR driver (ur_modern_driver) -->
+  <include file="$(find ur_modern_driver)/launch/ur_common.launch">
+    <arg name="prefix" value="$(arg prefix)"/>
+    <arg name="robot_ip" value="$(arg robot_ip)"/>
+    <arg name="min_payload" value="$(arg min_payload)"/>
+    <arg name="max_payload" value="$(arg max_payload)"/>
+  </include>
+
+  <!-- RealSense camera driver -->
+  <include if="$(arg start_camera)" file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="serial_no" value="$(arg camera_serial)"/>
+    <arg name="align_depth" value="$(arg align_depth)"/>
+  </include>
+
+  <!-- Robotiq 2F gripper TCP node (talks to URCap gripper server) -->
+  <node if="$(arg start_gripper)" pkg="robotiq_2f_gripper_control" type="Robotiq2FGripperTcpNode.py" name="robotiq_gripper_tcp" output="screen"
+        args="$(arg gripper_ip) $(arg gripper_port)" />
+
+  <!-- Wrap as a GripperCommand action server for easier use -->
+  <include if="$(arg use_gripper_action_server)" file="$(find robotiq_2f_gripper_action_server)/launch/robotiq_2f_gripper_action_server.launch">
+    <arg name="gripper_name" value="$(arg gripper_name)"/>
+  </include>
+
+  <!-- MoveIt: use the gripper variant config; do NOT reload URDF here to keep our uploaded description -->
+  <include file="$(find ur5_gripper_moveit_config)/launch/move_group.launch">
+    <arg name="load_robot_description" value="false"/>
+  </include>
+
+  <!-- Optional: auto move to initial pose (grasp) after MoveIt startup -->
+  <node if="$(arg auto_move_to_grasp)" name="send_initial_pose"
+        pkg="ur5_gripper_moveit_config" type="send_initial_pose.py" output="screen"
+        launch-prefix="bash -c 'sleep $(arg auto_move_delay); $0 $@'"/>
+
+  <!-- RViz with MoveIt plugin -->
+  <include if="$(arg start_rviz)" file="$(find ur5_gripper_moveit_config)/launch/moveit_rviz.launch">
+    <arg name="config" value="true"/>
+  </include>
+
+</launch>

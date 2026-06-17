@@ -1,0 +1,15 @@
+<launch>
+  <include file="$(find ur5_moveit_config)/launch/demo.launch" />
+
+  <!-- Play the rosbag that contains the pointcloud data -->
+  <!--node pkg="moveit_tutorials" type="bag_publisher_maintain_time" name="point_clouds" /-->
+
+  <include file="$(find realsense2_camera)/launch/demo_pointcloud.launch" />
+
+  <!-- Run the detection and adding cylinder node -->
+  <!--node pkg="moveit_tutorials" type="cylinder_segment" name="point_cloud_preprocessor" /-->
+
+  <!-- If needed, broadcast static tf for robot root -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="camera_to_robot" args="0.72032458 -0.21936176  0.90925255 0.98422218  0.0969083  -0.04779138  0.14011233 camera_color_optical_frame world" />
+
+</launch>

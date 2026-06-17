@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 相机查看器 Launch 文件 -->
+  <!-- 用于单独启动相机并查看图像，无需启动完整的障碍物避障系统 -->
+  
+  <!-- 启动 RealSense 相机 -->
+  <include file="$(find realsense2_camera)/launch/demo_pointcloud.launch" />
+  
+  <!-- 启动图像查看器 - 彩色图像 -->
+  <node pkg="image_view" type="image_view" name="camera_color_viewer" output="screen">
+    <remap from="image" to="/camera/color/image_raw"/>
+    <param name="autosize" value="true"/>
+    <param name="window_name" value="RealSense Color Image"/>
+  </node>
+  
+  <!-- 启动图像查看器 - 深度图像（可选，默认注释） -->
+  <!--
+  <node pkg="image_view" type="image_view" name="camera_depth_viewer" output="screen">
+    <remap from="image" to="/camera/depth/image_rect_raw"/>
+    <param name="autosize" value="true"/>
+    <param name="window_name" value="RealSense Depth Image"/>
+  </node>
+  -->
+  
+  <!-- 启动 RQT 图像查看器（更灵活的选择） -->
+  <!--
+  <node pkg="rqt_image_view" type="rqt_image_view" name="rqt_camera_viewer" output="screen"/>
+  -->
+  
+  <!-- 显示相机信息 -->
+  <node pkg="rostopic" type="rostopic" name="camera_info_display" 
+        args="echo /camera/color/camera_info" output="log"/>
+  
+</launch>

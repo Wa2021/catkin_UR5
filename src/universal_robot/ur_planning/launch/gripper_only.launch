@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ================================================================================
+       Robotiq HandE 夹爪独立启动文件
+       ================================================================================
+       
+       功能：只启动夹爪驱动，不启动机械臂
+       
+       使用方法：
+       roslaunch robotiq_hande_ros_driver gripper_only.launch robot_ip:=192.168.0.1
+       
+       然后可以：
+       1. 运行 test_gripper 脚本控制夹爪
+       2. 使用 rosservice call /gripper_service 命令控制夹爪
+       
+       ================================================================================ -->
+
+  <!-- 机器人 IP 地址（夹爪通过 URCap 连接，IP 与机器人相同）-->
+  <arg name="robot_ip" default="192.168.0.1" doc="UR5 机器人的 IP 地址"/>
+  <arg name="gripper_port" default="63352" doc="Robotiq URCap 通信端口"/>
+
+  <!-- 启动 Robotiq HandE 夹爪驱动 -->
+  <node name="gripper_node" 
+        pkg="robotiq_hande_ros_driver" 
+        type="gripper_node.py" 
+        output="screen">
+    <param name="robot_ip" value="$(arg robot_ip)"/>
+  </node>
+
+</launch>

@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 当前使用的GUI配置 -->
+  <include file="$(find ur_description)/launch/ur5_with_gripper_upload.launch"/>
+  
+  <!-- Set initial joint positions from config file -->
+  <node name="set_initial_joints" pkg="ur_description" type="set_initial_joints.py" output="screen"/>
+  
+  <!-- Joint State Publisher GUI - 主要的关节控制工具 -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" launch-prefix="bash -c 'sleep 1; $0 $@'"/>
+  
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ur_description)/cfg/view_robot.rviz" required="true" />
+</launch>
+
+<!-- 
+其他GUI配置选项（替换第7-9行）：
+
+1. 当前配置：滑条GUI + 初始位置设置
+  <node name="set_initial_joints" pkg="ur_description" type="set_initial_joints.py" output="screen"/>
+  <node name="joint_state_publisher" pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" launch-prefix="bash -c 'sleep 1; $0 $@'"/>
+
+2. 启动RQT工具作为额外控制选项：
+  <node name="rqt_gui" pkg="rqt_gui" type="rqt_gui" args="perspective-file $(find ur_description)/config/rqt_perspective.perspective"/>
+
+3. 使用自定义PyQt GUI:
+  <node name="joint_control_gui" pkg="ur_description" type="joint_control_gui.py" output="screen"/>
+
+4. 非GUI模式 (仅用于程序控制):
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" />
+-->

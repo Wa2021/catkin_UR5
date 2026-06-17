@@ -1,0 +1,96 @@
+# 眼在手YOLO避障抓取配置文件
+
+# YOLO检测配置
+detection:
+  confidence_threshold: 0.5      # 检测置信度阈值
+  model_path: "../../../models/yolov8n.pt"      # YOLO模型路径，默认使用工作空间 src/models 下的共享模型
+  obstacle_mode: "blacklist"    # 障碍物模式: blacklist(除目标外都是障碍物) 或 whitelist(仅指定物体是障碍物)
+
+# 目标物体配置（不会被当作障碍物）
+target_objects:
+  - "keyboard"
+
+
+# 障碍物体配置（会被添加到规划场景）
+obstacle_objects:
+  - "person"
+  - "laptop"
+  - "computer"
+  - "book"
+  - "chair"
+  - "mouse"
+  - "keyboard"
+  - "cell phone"
+  - "remote"
+  - "backpack"
+  - "handbag"
+  - "suitcase"
+
+# 坐标系配置
+coordinate_frames:
+  robot_base: "base_link"
+  camera_frame: "camera_color_optical_frame"
+  end_effector: "ee_link"
+
+# 障碍物尺寸配置（米）
+obstacle_dimensions:
+  person:
+    height: 1.7
+    radius: 0.3
+  laptop:
+    height: 0.05
+    radius: 0.15
+  book:
+    height: 0.05
+    radius: 0.12
+  chair:
+    height: 0.8
+    radius: 0.25
+  mouse:
+    height: 0.03
+    radius: 0.06
+  keyboard:
+    height: 0.03
+    radius: 0.15
+  cell_phone:
+    height: 0.01
+    radius: 0.08
+  default:
+    height: 0.1
+    radius: 0.1
+
+# 安全距离配置
+safety:
+  obstacle_padding: 0.05        # 障碍物填充距离（米）
+  planning_timeout: 10.0        # 路径规划超时时间（秒）
+  execution_timeout: 30.0       # 执行超时时间（秒）
+
+# 抓取配置
+grasping:
+  approach_distance: 0.1        # 接近距离（米）
+  retreat_distance: 0.15        # 撤退距离（米）
+  grasp_tolerance: 0.02         # 抓取容差（米）
+  max_attempts: 3               # 最大尝试次数
+
+# 相机配置
+camera:
+  auto_freeze_enabled: true     # 启用自动冻结功能（由snapshot_controller管理）
+  freeze_delay: 8.0            # 冻结延迟时间（秒）
+  image_topic: "/camera/color/image_raw"
+  pointcloud_topic: "/camera/depth/color/points"
+  pointcloud_relay_topic: "/camera/depth/color/points_relay"
+  pointcloud_filtered_topic: "/camera/depth/color/points_filtered"
+  camera_info_topic: "/camera/color/camera_info"
+
+# 点云过滤配置
+pointcloud_filter:
+  filter_enabled: true          # 启用点云过滤功能
+  target_expand_factor: 1.3     # 目标区域扩展因子
+  min_depth: 0.1               # 最小深度（米）
+  max_depth: 2.0               # 最大深度（米）
+
+# 点云障碍物生成配置
+pointcloud_obstacles:
+  voxel_size: 0.01             # 体素大小（米）
+  min_cluster_size: 50         # 最小点簇大小
+  update_rate: 2.0             # 障碍物更新频率（Hz）

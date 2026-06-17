@@ -1,0 +1,13 @@
+numpy>=1.22.0
+opencv-python>=4.5.4.60
+ultralytics>=8.0.0
+torch>=1.7.0
+torchvision>=0.8.1
+pyrealsense2>=2.50.0
+scikit-image
+imageio
+torchsummary
+tensorboardX
+Pillow
+scipy>=1.7.0
+matplotlib>=3.3.0

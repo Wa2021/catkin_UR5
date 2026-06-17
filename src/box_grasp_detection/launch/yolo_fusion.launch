@@ -1,0 +1,139 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ===================================== -->
+  <!-- YOLO + 点云融合检测 Launch文件         -->
+  <!-- ===================================== -->
+  
+  <!-- YOLO模型路径 -->
+  <arg name="yolo_model" default="$(find box_grasp_detection)/../models/yolov8n.pt" 
+       doc="YOLO模型文件路径，可以是 yolov8n.pt (通用), yolov8m.pt (更准), 或自定义训练的模型" />
+  
+  <!-- YOLO参数 -->
+  <arg name="confidence" default="0.5" doc="YOLO检测置信度阈值 (0.0-1.0)" />
+  <arg name="target_class" default="all" doc="目标类别名称，如 'box', 'bottle', 'all' 等" />
+  
+  <!-- 点云参数 -->
+  <arg name="depth_range_min" default="0.2" doc="最小深度 (m)" />
+  <arg name="depth_range_max" default="1.5" doc="最大深度 (m)" />
+  <arg name="min_points" default="100" doc="有效药盒的最小点数" />
+  
+  <!-- 是否启用堆叠规划 -->
+  <arg name="use_stacked_planner" default="true" />
+  
+  <!-- 是否启用可视化 -->
+  <arg name="visualize" default="true" />
+  
+  <!-- ===================================== -->
+  <!-- 1. YOLO + 点云融合节点                 -->
+  <!-- ===================================== -->
+  <node pkg="box_grasp_detection" 
+        type="yolo_pointcloud_fusion.py" 
+        name="yolo_pointcloud_fusion" 
+        output="screen">
+    
+    <!-- YOLO配置 -->
+    <param name="yolo_model" value="$(arg yolo_model)" />
+    <param name="confidence" value="$(arg confidence)" />
+    <param name="target_class" value="$(arg target_class)" />
+    
+    <!-- 点云配置 -->
+    <param name="depth_range" value="[$(arg depth_range_min), $(arg depth_range_max)]" />
+    <param name="min_points" value="$(arg min_points)" />
+    
+    <!-- 话题映射 -->
+    <remap from="/camera/color/image_raw" to="/camera/color/image_raw" />
+    <remap from="/camera/depth/color/points" to="/camera/depth/color/points" />
+    <remap from="/camera/color/camera_info" to="/camera/color/camera_info" />
+  </node>
+  
+  <!-- ===================================== -->
+  <!-- 2. 抓取规划节点 (基于YOLO结果)         -->
+  <!-- ===================================== -->
+  <node pkg="box_grasp_detection" 
+        type="box_grasp_planner.py" 
+        name="box_grasp_planner_yolo" 
+        output="screen">
+    
+    <!-- 输入：YOLO融合的结果 -->
+    <remap from="/detected_boxes" to="/box_grasps_yolo" />
+    
+    <!-- 夹爪参数 -->
+    <param name="gripper_width" value="0.050" />  <!-- Robotiq Hand-E -->
+    <param name="gripper_depth" value="0.10" />
+    <param name="approach_distance" value="0.15" />
+    
+    <!-- 抓取策略权重 -->
+    <param name="weight_stability" value="0.4" />
+    <param name="weight_reachability" value="0.3" />
+    <param name="weight_collision" value="0.3" />
+  </node>
+  
+  <!-- ===================================== -->
+  <!-- 3. 堆叠场景规划器 (可选)              -->
+  <!-- ===================================== -->
+  <node if="$(arg use_stacked_planner)" 
+        pkg="box_grasp_detection" 
+        type="stacked_box_planner.py" 
+        name="stacked_box_planner_yolo" 
+        output="screen">
+    
+    <!-- 输入：YOLO检测的抓取 -->
+    <remap from="/box_grasps" to="/box_grasps_yolo" />
+    
+    <!-- 输出：优化后的抓取 -->
+    <remap from="/box_grasps_smart" to="/box_grasps_yolo_smart" />
+    
+    <!-- 堆叠检测参数 -->
+    <param name="z_stacking_threshold" value="0.05" />
+    <param name="xy_overlap_threshold" value="0.7" />
+    <param name="min_clearance" value="0.15" />
+  </node>
+  
+  <!-- ===================================== -->
+  <!-- 4. 可视化节点 (可选)                  -->
+  <!-- ===================================== -->
+  <node if="$(arg visualize)" 
+        pkg="box_grasp_detection" 
+        type="box_grasp_visualizer.py" 
+        name="box_grasp_visualizer_yolo" 
+        output="screen">
+    
+    <!-- 选择输入：优化后 or 原始 -->
+    <remap if="$(arg use_stacked_planner)" 
+           from="~input_grasps" to="/box_grasps_yolo_smart" />
+    <remap unless="$(arg use_stacked_planner)" 
+           from="~input_grasps" to="/box_grasps_yolo" />
+    
+    <param name="window_name" value="YOLO + PointCloud Fusion" />
+    <param name="show_all_grasps" value="true" />
+    <param name="coord_frame_size" value="0.05" />
+  </node>
+  
+  <!-- ===================================== -->
+  <!-- 说明                                  -->
+  <!-- ===================================== -->
+  <!--
+  话题结构:
+    输入:
+      - /camera/color/image_raw (sensor_msgs/Image) : RGB图像
+      - /camera/depth/color/points (sensor_msgs/PointCloud2) : 深度点云
+      - /camera/color/camera_info (sensor_msgs/CameraInfo) : 相机内参
+    
+    输出:
+      - /box_grasps_yolo (BoxGraspArray) : YOLO检测的原始结果
+      - /box_grasps_yolo_smart (BoxGraspArray) : 堆叠优化后的结果
+      - /yolo_debug_image (sensor_msgs/Image) : YOLO检测可视化
+  
+  使用方法:
+    1. 确保已安装 ultralytics: pip install ultralytics
+    2. 准备YOLO模型 (yolov8n.pt 或自训练模型)
+    3. 启动相机: roslaunch realsense2_camera rs_camera.launch
+    4. 启动本launch: roslaunch box_grasp_detection yolo_fusion.launch
+    5. 查看结果: rostopic echo /box_grasps_yolo_smart
+  
+  自定义模型:
+    roslaunch box_grasp_detection yolo_fusion.launch \
+      yolo_model:=/path/to/your/custom_model.pt \
+      target_class:=medicine_box
+  -->
+</launch>

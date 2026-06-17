@@ -1,0 +1,15 @@
+<launch>
+  <!-- 加载 URDF 参数 -->
+  <param name="robot_description" command="$(find xacro)/xacro $(find ur_description)/urdf/ur5_robot.urdf.xacro" />
+
+  <!-- 发布 joint_states（一般用 joint_state_publisher_gui，仿真环境可用） -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" />
+
+  <!-- 可视化（rviz） -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ur5_moveit_config)/launch/moveit.rviz" required="true" />
+
+  <!-- MoveIt! 的 move_group 节点 -->
+  <include file="$(find ur5_moveit_config)/launch/move_group.launch"/>
+
+</launch>
+

@@ -1,0 +1,12 @@
+<launch>
+  <!-- 确保 robot_description 已加载；如已由 move_group 提前加载则不会报错 -->
+  <include file="$(find ur5_moveit_config)/launch/planning_context.launch">
+    <arg name="load_robot_description" value="true"/>
+  </include>
+
+  <!-- Launch the servo server -->
+  <!-- 注意：joint_group_vel_controller 已由 ur5_ros_control.launch 启动，无需重复加载 -->
+  <node name="servo_server" pkg="moveit_servo" type="servo_server" output="screen" >
+    <rosparam command="load" file="$(find ur5_moveit_config)/config/ur5_servo_config.yaml" />
+  </node>
+</launch>

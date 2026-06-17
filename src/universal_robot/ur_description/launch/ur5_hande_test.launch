@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gui" default="true" />
+  
+  <!-- Load the URDF into the ROS Parameter Server -->
+  <param name="robot_description" command="$(find xacro)/xacro --inorder '$(find ur_description)/urdf/ur5_gripper_joint_limited_robot.urdf.xacro'" />
+  
+  <!-- Run the joint_state_publisher with GUI -->
+  <node name="joint_state_publisher_gui" pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" if="$(arg gui)"/>
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" unless="$(arg gui)"/>
+  
+  <!-- Run the robot_state_publisher -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+  
+  <!-- Run RViz -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ur_description)/config/view_robot.rviz" required="true" />
+</launch>

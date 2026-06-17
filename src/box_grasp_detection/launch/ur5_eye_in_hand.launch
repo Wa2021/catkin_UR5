@@ -1,0 +1,87 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Box Grasp Detection for UR5 with RealSense D435 -->
+  <!-- 眼在手抓取系统 - 集成版 -->
+  
+  <!-- 参数配置 -->
+  <arg name="camera_namespace" default="camera" />
+  <arg name="use_snapshot_control" default="true" />
+  <arg name="enable_open3d_viz" default="false" />
+  <arg name="auto_freeze_enabled" default="false" />
+  <arg name="freeze_delay" default="8.0" />
+  <arg name="use_rviz" default="true" />
+  
+  <!-- 1. 启动RealSense相机 -->
+  <include file="$(find realsense2_camera)/launch/demo_pointcloud.launch">
+    <arg name="camera" value="$(arg camera_namespace)" />
+  </include>
+  
+  <!-- 2. 快照控制器（可选） -->
+  <group if="$(arg use_snapshot_control)">
+    <node pkg="ur5_gripper_moveit_config" type="snapshot_control.py" 
+          name="snapshot_controller" output="screen">
+      <param name="auto_freeze_enabled" value="$(arg auto_freeze_enabled)" />
+      <param name="freeze_delay" value="$(arg freeze_delay)" />
+    </node>
+    
+    <!-- 使用中继的点云话题 -->
+    <param name="box_detector/input_cloud_topic" value="/camera/depth/color/points_relay" />
+  </group>
+  
+  <!-- 如果不使用快照控制，直接使用相机点云 -->
+  <group unless="$(arg use_snapshot_control)">
+    <param name="box_detector/input_cloud_topic" value="/camera/depth/color/points" />
+  </group>
+  
+  <!-- 3. Box检测器节点 (C++) -->
+  <node name="box_detector" pkg="box_grasp_detection" type="box_detector_node" output="screen">
+    <param name="input_cloud_topic" value="$(arg camera_namespace)/depth/color/points" />
+    <param name="output_frame" value="$(arg camera_namespace)_color_optical_frame" />
+    <param name="publish_rate" value="2.0" />
+    
+    <!-- 检测参数 -->
+    <param name="voxel_leaf_size" value="0.005" />
+    <param name="passthrough_min_z" value="0.01" />
+    <param name="passthrough_max_z" value="1.5" />
+    <param name="cluster_tolerance" value="0.02" />
+    <param name="cluster_min_size" value="100" />
+    <param name="cluster_max_size" value="25000" />
+    <param name="plane_distance_threshold" value="0.01" />
+    <param name="min_box_volume" value="0.00001" />
+    <param name="max_box_volume" value="0.01" />
+  </node>
+  
+  <!-- 4. 抓取规划器 (Python) -->
+  <node name="box_grasp_planner" pkg="box_grasp_detection" type="box_grasp_planner.py" output="screen">
+    <!-- 夹爪参数 - 根据您的夹爪调整 -->
+    <param name="gripper_width" value="0.050" />  <!-- Robotiq Hand-E: 50mm -->
+    <param name="gripper_depth" value="0.05" />
+    <param name="approach_distance" value="0.15" />
+    
+    <!-- 评分权重 -->
+    <param name="weight_stability" value="0.4" />
+    <param name="weight_reachability" value="0.3" />
+    <param name="weight_collision" value="0.3" />
+  </node>
+  
+  <!-- 5. Open3D可视化器（可选） -->
+  <group if="$(arg enable_open3d_viz)">
+    <node name="box_grasp_visualizer" pkg="box_grasp_detection" 
+          type="box_grasp_visualizer_conda.sh" output="screen">
+      <param name="show_coordinate_frame" value="true" />
+      <param name="grasp_arrow_length" value="0.1" />
+      <param name="show_all_grasps" value="true" />
+      <param name="show_top_n_grasps" value="999" />
+    </node>
+  </group>
+  
+  <!-- 6. RViz可视化（默认启动，添加稳定性参数） -->
+  <node if="$(arg use_rviz)" name="rviz" pkg="rviz" type="rviz" output="screen" 
+        respawn="true" respawn_delay="2"
+        args="-d $(find box_grasp_detection)/config/box_detection.rviz">
+    <!-- respawn: 自动重启崩溃的RViz -->
+    <!-- respawn_delay: 重启延迟2秒 -->
+    <env name="LIBGL_ALWAYS_SOFTWARE" value="1" />  <!-- 使用软件渲染（虚拟机友好） -->
+  </node>
+  
+</launch>
