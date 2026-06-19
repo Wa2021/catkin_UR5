@@ -38,8 +38,10 @@ compile_commands.json
 *.tmp
 *.swp
 *~
+Desktop.ini
 
-# Large ML/checkpoint files: keep commented unless you decide to host models elsewhere.
-# *.pt
-# *.pth
-# *.onnx
+# Large ML/checkpoint files: keep models local or publish them via releases/LFS.
+*.pt
+*.pth
+*.onnx
+*.engine
