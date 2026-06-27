@@ -207,9 +207,9 @@ class PostureVisionMappingTest:
         except KeyboardInterrupt:
             pass
 
-    def move_and_measure(self, name, rpy_pose, k_acc_param, k_vel_param):
+    def move_and_measure(self, name, rotvec_pose, k_acc_param, k_vel_param):
         print(f"\n[{name}] 正在移动...")
-        self.robot.move_j_p_1(rpy_pose, k_acc=k_acc_param, k_vel=k_vel_param)
+        self.robot.move_j_p_1_rotvec(rotvec_pose, k_acc=k_acc_param, k_vel=k_vel_param)
 
         print(f"[{name}] 等待 3 秒以确保机械臂运动完毕并获取最新图像...")
         time.sleep(3.0)
@@ -225,6 +225,20 @@ class PostureVisionMappingTest:
             f"tilt_err_base={vector_to_str(measurement['tilt_err_base'])}"
         )
         return measurement
+
+    def _pose_with_base_axis_delta(self, base_pose, axis, angle_rad):
+        pose = np.array(base_pose, dtype=float).copy()
+        base_rot, _ = cv2.Rodrigues(pose[3:6])
+
+        delta_rot = np.eye(3)
+        axis_index = {"x": 0, "y": 1, "z": 2}[axis]
+        delta_vec = np.zeros(3)
+        delta_vec[axis_index] = angle_rad
+        delta_rot, _ = cv2.Rodrigues(delta_vec)
+
+        new_rotvec, _ = cv2.Rodrigues(delta_rot @ base_rot)
+        pose[3:6] = new_rotvec.reshape(3)
+        return pose.tolist()
 
     def _print_axis_delta(self, label, plus_measurement, minus_measurement, base_measurement, step_rad):
         if plus_measurement is None or minus_measurement is None or base_measurement is None:
@@ -250,51 +264,40 @@ class PostureVisionMappingTest:
         x_base, y_base, z_base = -0.478, -0.0678, 0.336
         rx, ry, rz = 2.222, -2.22, -0.140
 
-        try:
-            rpy_tuple = self.robot.rotvec_to_rpy(x_base, y_base, z_base, rx, ry, rz)
-            base_pose_rpy = list(rpy_tuple)
-        except Exception as e:
-            rospy.logerr(f"位姿转换失败: {e}")
-            return
+        base_pose_rotvec = [x_base, y_base, z_base, rx, ry, rz]
 
-        print(f"基准位姿 (x,y,z,r,p,y): {[round(x, 4) for x in base_pose_rpy]}")
+        print(f"基准位姿 (x,y,z,rx,ry,rz): {[round(x, 4) for x in base_pose_rotvec]}")
         input("按下 Enter 键开始移动到基准位置（请确保安全，机械臂将开始缓慢移动）...")
 
         k_acc = 0.2
         k_vel = 0.2
         step_rad = math.radians(2.0)
 
-        base_m = self.move_and_measure("1. Base Position", base_pose_rpy, k_acc, k_vel)
+        base_m = self.move_and_measure("1. Base Position", base_pose_rotvec, k_acc, k_vel)
 
-        pose_r_pos = base_pose_rpy.copy()
-        pose_r_pos[3] += step_rad
+        pose_r_pos = self._pose_with_base_axis_delta(base_pose_rotvec, "x", step_rad)
         roll_pos_m = self.move_and_measure("2. Roll +2° (绕 X)", pose_r_pos, k_acc, k_vel)
-        self.move_and_measure("Return to Base", base_pose_rpy, k_acc, k_vel)
+        self.move_and_measure("Return to Base", base_pose_rotvec, k_acc, k_vel)
 
-        pose_r_neg = base_pose_rpy.copy()
-        pose_r_neg[3] -= step_rad
+        pose_r_neg = self._pose_with_base_axis_delta(base_pose_rotvec, "x", -step_rad)
         roll_neg_m = self.move_and_measure("3. Roll -2° (绕 X)", pose_r_neg, k_acc, k_vel)
-        self.move_and_measure("Return to Base", base_pose_rpy, k_acc, k_vel)
+        self.move_and_measure("Return to Base", base_pose_rotvec, k_acc, k_vel)
 
-        pose_p_pos = base_pose_rpy.copy()
-        pose_p_pos[4] += step_rad
+        pose_p_pos = self._pose_with_base_axis_delta(base_pose_rotvec, "y", step_rad)
         pitch_pos_m = self.move_and_measure("4. Pitch +2° (绕 Y)", pose_p_pos, k_acc, k_vel)
-        self.move_and_measure("Return to Base", base_pose_rpy, k_acc, k_vel)
+        self.move_and_measure("Return to Base", base_pose_rotvec, k_acc, k_vel)
 
-        pose_p_neg = base_pose_rpy.copy()
-        pose_p_neg[4] -= step_rad
+        pose_p_neg = self._pose_with_base_axis_delta(base_pose_rotvec, "y", -step_rad)
         pitch_neg_m = self.move_and_measure("5. Pitch -2° (绕 Y)", pose_p_neg, k_acc, k_vel)
-        self.move_and_measure("Return to Base", base_pose_rpy, k_acc, k_vel)
+        self.move_and_measure("Return to Base", base_pose_rotvec, k_acc, k_vel)
 
-        pose_y_pos = base_pose_rpy.copy()
-        pose_y_pos[5] += step_rad
+        pose_y_pos = self._pose_with_base_axis_delta(base_pose_rotvec, "z", step_rad)
         yaw_pos_m = self.move_and_measure("6. Yaw +2° (绕 Z)", pose_y_pos, k_acc, k_vel)
-        self.move_and_measure("Return to Base", base_pose_rpy, k_acc, k_vel)
+        self.move_and_measure("Return to Base", base_pose_rotvec, k_acc, k_vel)
 
-        pose_y_neg = base_pose_rpy.copy()
-        pose_y_neg[5] -= step_rad
+        pose_y_neg = self._pose_with_base_axis_delta(base_pose_rotvec, "z", -step_rad)
         yaw_neg_m = self.move_and_measure("7. Yaw -2° (绕 Z)", pose_y_neg, k_acc, k_vel)
-        self.move_and_measure("Return to Base (Final)", base_pose_rpy, k_acc, k_vel)
+        self.move_and_measure("Return to Base (Final)", base_pose_rotvec, k_acc, k_vel)
 
         print("\n" + "=" * 60)
         print("测 试 结 果 总 结")

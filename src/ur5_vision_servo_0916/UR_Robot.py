@@ -12,7 +12,7 @@ import cv2
 class UR_Robot:
     def __init__(self, tcp_host_ip="192.168.0.1", tcp_port=30003, workspace_limits=None,
                  is_use_robotiq85=True, is_use_camera=True):
-        # Init varibles
+        # Basic connection and device options
         if workspace_limits is None:
             workspace_limits = [[-0.7, 0.7], [-0.7, 0.7], [0.00, 0.6]]
         self.workspace_limits = workspace_limits
@@ -68,10 +68,10 @@ class UR_Robot:
                              (0 / 360.0) * 2 * np.pi, -(90 / 360.0) * 2 * np.pi,
                              -(0 / 360.0) * 2 * np.pi, 0.0]
 
-        # test
         # self.testRobot()
-    # Test for robot controlmove_and_wait_for_pos
+
     def testRobot(self):
+        """Manual robot motion smoke test. Keep calls commented unless testing on hardware."""
         try:
             print("Test for robot...")
             # self.move_j([-(0 / 360.0) * 2 * np.pi, -(90 / 360.0) * 2 * np.pi,
@@ -103,190 +103,297 @@ class UR_Robot:
         except:
             print("Test fail! ")
     
-    # joint control
-    '''
-    input:joint_configuration = joint angle
-    '''
     def move_j(self, joint_configuration,k_acc=1,k_vel=1,t=0,r=0):
-        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
+        """Blocking joint-space move. joint_configuration contains six joint angles in radians."""
+        joint_configuration = np.asarray(joint_configuration, dtype=np.float64).reshape(-1)
+        if joint_configuration.size != 6:
+            raise ValueError("joint_configuration must contain 6 joint angles")
+
         tcp_command = "movej([%f" % joint_configuration[0]  #"movej([]),a=,v=,\n"
         for joint_idx in range(1,6):
             tcp_command = tcp_command + (",%f" % joint_configuration[joint_idx])
         tcp_command = tcp_command + "],a=%f,v=%f,t=%f,r=%f)\n" % (k_acc*self.joint_acc, k_vel*self.joint_vel,t,r)
-        self.tcp_socket.send(str.encode(tcp_command))#把拼好的字符串编码成字节流，发送给机械臂。
 
-        # Block until robot reaches home state
-        state_data = self.tcp_socket.recv(1500)
-        actual_joint_positions = self.parse_tcp_state_data(state_data, 'joint_data')
-        while not all([np.abs(actual_joint_positions[j] - joint_configuration[j]) < self.joint_tolerance for j in range(6)]):
-            state_data = self.tcp_socket.recv(1500)
+        with self._connect_robot_socket() as tcp_socket:
+            self.tcp_socket = tcp_socket
+            tcp_socket.sendall(str.encode(tcp_command))#把拼好的字符串编码成字节流，发送给机械臂。
+
+            # Block until the target joint configuration is reached.
+            state_data = tcp_socket.recv(1500)
             actual_joint_positions = self.parse_tcp_state_data(state_data, 'joint_data')
+            while not all([np.abs(actual_joint_positions[j] - joint_configuration[j]) < self.joint_tolerance for j in range(6)]):
+                state_data = tcp_socket.recv(1500)
+                actual_joint_positions = self.parse_tcp_state_data(state_data, 'joint_data')
+                time.sleep(0.01)
+
+    def _to_float_pose(self, pose):
+        pose = np.asarray(pose, dtype=np.float64).reshape(-1)
+        if pose.size != 6:
+            raise ValueError("TCP pose must contain 6 values: [x, y, z, rx, ry, rz] or [x, y, z, r, p, y]")
+        return pose
+
+    def _pose_to_rotvec_pose(self, tool_configuration, pose_format='rpy'):
+        """
+        Convert a TCP target to UR native pose [x, y, z, rx, ry, rz].
+
+        pose_format='rpy' keeps compatibility with the original APIs.
+        pose_format='rotvec'/'rxryrz' passes UR axis-angle orientation through unchanged.
+        """
+        pose = self._to_float_pose(tool_configuration)
+        fmt = pose_format.lower()
+        if fmt in ('rotvec', 'rxryrz', 'axis_angle', 'axis-angle'):
+            return pose
+        if fmt in ('rpy', 'xyzrpy', 'euler'):
+            rotvec = self.rpy2rotating_vector(pose[3:6])
+            return np.concatenate([pose[:3], rotvec])
+        raise ValueError("pose_format must be 'rpy' or 'rotvec'")
+
+    def _format_ur_pose(self, pose):
+        return "p[%f,%f,%f,%f,%f,%f]" % tuple(pose)
+
+    def _format_ur_vector(self, values):
+        values = np.asarray(values, dtype=np.float64).reshape(-1)
+        return "[" + ",".join("%f" % value for value in values) + "]"
+
+    def _send_urscript(self, program, recv_size=0, timeout=2.0):
+        """
+        Send a small URScript program and optionally receive one response packet.
+
+        This is useful for setup/stop/speed commands where we do not need the
+        blocking pose wait loop used by move_j_p and move_l.
+        """
+        if not program.endswith("\n"):
+            program += "\n"
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_socket:
+            tcp_socket.settimeout(timeout)
+            tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
+            tcp_socket.sendall(program.encode("utf-8"))
+            if recv_size:
+                return tcp_socket.recv(recv_size)
+        return None
+
+    def _connect_robot_socket(self, timeout=None):
+        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if timeout is not None:
+            tcp_socket.settimeout(timeout)
+        tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
+        return tcp_socket
+
+    def _wait_for_tool_position(self, tcp_socket, target_pose, recv_size=1500, max_attempts=None):
+        actual_tool_positions = None
+        attempt = 0
+        while actual_tool_positions is None or not all(
+                [np.abs(actual_tool_positions[j] - target_pose[j]) < self.tool_pose_tolerance[j] for j in range(3)]
+        ):
+            if max_attempts is not None and attempt >= max_attempts:
+                print("[警告] 超过最大尝试次数，跳出等待循环")
+                break
+            state_data = tcp_socket.recv(recv_size)
+            actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
+            attempt += 1
             time.sleep(0.01)
-        self.tcp_socket.close()
-    # joint control
-    '''
-    move_j_p(self, tool_configuration,k_acc=1,k_vel=1,t=0,r=0)
-    input:tool_configuration=[x y z r p y]
-    其中x y z为三个轴的目标位置坐标，单位为米
-    r p y ，单位为弧度
-    '''
+        return actual_tool_positions
 
+    def move_j_pose_rotvec(self, tool_configuration, k_acc=1, k_vel=1, t=0, r=0):
+        """Blocking movej to a UR native TCP pose [x, y, z, rx, ry, rz]."""
+        return self.move_j_p(tool_configuration, k_acc, k_vel, t, r, pose_format='rotvec')
 
-    def move_j_p(self, tool_configuration, k_acc=1, k_vel=1, t=0, r=0):
-        import struct
-        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_socket.settimeout(5.0)  # 设置超时时间，避免阻塞
-        self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
-        print(f"movej_p([{tool_configuration}])")
+    def move_j_p(self, tool_configuration, k_acc=1, k_vel=1, t=0, r=0, pose_format='rpy'):
+        target_pose = self._pose_to_rotvec_pose(tool_configuration, pose_format)
+        print(f"movej_p({pose_format} -> rotvec: {target_pose.tolist()})")
 
         # 构造 URScript 命令
         tcp_command = "def process():\n"
-        tcp_command += " array = rpy2rotvec([%f,%f,%f])\n" % (
-            tool_configuration[3], tool_configuration[4], tool_configuration[5])
-        tcp_command += "movej(get_inverse_kin(p[%f,%f,%f,array[0],array[1],array[2]]),a=%f,v=%f,t=%f,r=%f)\n" % (
-            tool_configuration[0], tool_configuration[1], tool_configuration[2],
+        tcp_command += "movej(get_inverse_kin(%s),a=%f,v=%f,t=%f,r=%f)\n" % (
+            self._format_ur_pose(target_pose),
             k_acc * self.joint_acc, k_vel * self.joint_vel, t, r)
         tcp_command += "end\n"
 
-        # 发送 URScript 指令
-        self.tcp_socket.send(str.encode(tcp_command))
+        with self._connect_robot_socket(timeout=5.0) as tcp_socket:
+            self.tcp_socket = tcp_socket
+            # 发送 URScript 指令
+            tcp_socket.sendall(str.encode(tcp_command))
 
-        # ✅ 增加延迟等待机器人响应
-        time.sleep(0.2)  # 等待机器人执行命令
+            # 等待机器人开始返回状态数据。
+            time.sleep(0.2)  # 等待机器人执行命令
 
-        try:
-            state_data = self.tcp_socket.recv(2048)
-            actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
-        except Exception as e:
-            print(f"[错误] 初次解析TCP数据失败: {e}")
-            actual_tool_positions = None
-
-        # ✅ 增加循环最大次数，防止死循环
-        max_attempts = 100
-        attempt = 0
-
-        while actual_tool_positions is None or not all(
-                [np.abs(actual_tool_positions[j] - tool_configuration[j]) < self.tool_pose_tolerance[j] for j in
-                 range(3)]
-        ):
-            if attempt >= max_attempts:
-                print("[警告] 超过最大尝试次数，跳出循环")
-                break
             try:
-                time.sleep(0.05)
-                state_data = self.tcp_socket.recv(2048)
+                state_data = tcp_socket.recv(2048)
                 actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
             except Exception as e:
-                print(f"[警告] 第 {attempt + 1} 次尝试解析失败: {e}")
+                print(f"[错误] 初次解析TCP数据失败: {e}")
                 actual_tool_positions = None
-            attempt += 1
 
-        time.sleep(1.5)  # ✅ 等待移动稳定
-        self.tcp_socket.close()
+            # 限制等待次数，避免通信异常时一直阻塞。
+            max_attempts = 100
+            attempt = 0
 
-    def move_j_p_1(self, tool_configuration, k_acc=1, k_vel=1, t=0, r=0):
+            while actual_tool_positions is None or not all(
+                    [np.abs(actual_tool_positions[j] - target_pose[j]) < self.tool_pose_tolerance[j] for j in range(3)]
+            ):
+                if attempt >= max_attempts:
+                    print("[警告] 超过最大尝试次数，跳出循环")
+                    break
+                try:
+                    time.sleep(0.05)
+                    state_data = tcp_socket.recv(2048)
+                    actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
+                except Exception as e:
+                    print(f"[警告] 第 {attempt + 1} 次尝试解析失败: {e}")
+                    actual_tool_positions = None
+                attempt += 1
+
+            time.sleep(1.5)  # 等待移动稳定
+
+    def move_j_p_1_rotvec(self, tool_configuration, k_acc=1, k_vel=1, t=0, r=0):
+        """Non-blocking movej to a UR native TCP pose [x, y, z, rx, ry, rz]."""
+        return self.move_j_p_1(tool_configuration, k_acc, k_vel, t, r, pose_format='rotvec')
+
+    def move_j_p_1(self, tool_configuration, k_acc=1, k_vel=1, t=0, r=0, pose_format='rpy'):
         """
         一个【非阻塞】的 move_j_p 函数，但每次调用都独立处理网络连接。
         适用于需要函数自包含、不希望在外部管理socket的场景。
 
         工作流程: 连接 -> 发送指令 -> 立即关闭并返回。
         """
+        target_pose = self._pose_to_rotvec_pose(tool_configuration, pose_format)
 
-        tcp_socket = None  # 初始化 socket 变量
         try:
-            # 1. 建立一个新的 socket 连接
-            # 使用 with 语句可以确保即使发生错误，socket 也会被自动关闭
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_socket:
-                # 设置一个较短的超时时间，以防连接过程卡住
                 tcp_socket.settimeout(2.0)
                 tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
 
-                # 2. 构造 URScript 指令
-                # (这里的指令构造逻辑与你原来的一样，是正确的)
                 tcp_command = "def process():\n"
-                tcp_command += "    array = rpy2rotvec([%f,%f,%f])\n" % (
-                    tool_configuration[3], tool_configuration[4], tool_configuration[5]
-                )
-                # 假设 self.joint_acc 和 self.joint_vel 存在于你的类中
-                # 如果不存在，可以直接使用 k_acc 和 k_vel
-                tcp_command += "    movej(get_inverse_kin(p[%f,%f,%f,array[0],array[1],array[2]]),a=%f,v=%f,t=%f,r=%f)\n" % (
-                    tool_configuration[0], tool_configuration[1], tool_configuration[2],
-                    k_acc, k_vel,  # 直接使用传入的速度和加速度比例
+                tcp_command += "    movej(get_inverse_kin(%s),a=%f,v=%f,t=%f,r=%f)\n" % (
+                    self._format_ur_pose(target_pose),
+                    k_acc, k_vel,
                     t, r
                 )
                 tcp_command += "end\n"
 
-                # 3. 发送指令
-                # 使用 sendall 确保所有数据都被发送出去
                 tcp_socket.sendall(str.encode(tcp_command))
-
-                # 4. 任务完成！立即返回，不进行任何等待或接收操作。
-                # with 语句会自动在代码块结束时调用 tcp_socket.close()
 
         except socket.timeout:
             print(f"[错误] 连接机器人 {self.tcp_host_ip} 超时。请检查网络和IP地址。")
         except Exception as e:
             print(f"[错误] 在 move_j_p 函数中发生异常: {e}")
 
-        # 函数在这里结束，不会阻塞主程序流程
+    def movep_pose_rotvec(self, tool_configuration, k_acc=1, k_vel=1, r=0):
+        """Blend-friendly movep to a UR native TCP pose [x, y, z, rx, ry, rz]."""
+        target_pose = self._pose_to_rotvec_pose(tool_configuration, pose_format='rotvec')
+        tcp_command = "movep(%s,a=%f,v=%f,r=%f)\n" % (
+            self._format_ur_pose(target_pose), k_acc * self.tool_acc, k_vel * self.tool_vel, r)
+        self._send_urscript(tcp_command)
 
-    # move_l is mean that the robot keep running in a straight line
-    def move_l(self, tool_configuration,k_acc=1,k_vel=1,t=0,r=0):
-        print(f"movel([{tool_configuration}])")
-        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
-        # command: movel([tool_configuration],a,v,t,r)\n
+    def move_l_pose_rotvec(self, tool_configuration, k_acc=1, k_vel=1, t=0, r=0):
+        """Blocking movel to a UR native TCP pose [x, y, z, rx, ry, rz]."""
+        return self.move_l(tool_configuration, k_acc, k_vel, t, r, pose_format='rotvec')
+
+    def move_l(self, tool_configuration,k_acc=1,k_vel=1,t=0,r=0, pose_format='rpy'):
+        target_pose = self._pose_to_rotvec_pose(tool_configuration, pose_format)
+        print(f"movel({pose_format} -> rotvec: {target_pose.tolist()})")
         tcp_command = "def process():\n"
-        tcp_command += " array = rpy2rotvec([%f,%f,%f])\n" % (
-            tool_configuration[3], tool_configuration[4], tool_configuration[5])
-        tcp_command += "movel(p[%f,%f,%f,array[0],array[1],array[2]],a=%f,v=%f,t=%f,r=%f)\n" % (
-            tool_configuration[0], tool_configuration[1], tool_configuration[2],
-            k_acc * self.joint_acc, k_vel * self.joint_vel,t,r)  # "movel([]),a=,v=,\n"
+        tcp_command += "movel(%s,a=%f,v=%f,t=%f,r=%f)\n" % (
+            self._format_ur_pose(target_pose),
+            k_acc * self.joint_acc, k_vel * self.joint_vel,t,r)
         tcp_command += "end\n"
-        self.tcp_socket.send(str.encode(tcp_command))
 
-        # Block until robot reaches home state
-        state_data = self.tcp_socket.recv(1500)
-        actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
-        while not all([np.abs(actual_tool_positions[j] - tool_configuration[j]) < self.tool_pose_tolerance[j] for j in range(3)]):
-            state_data = self.tcp_socket.recv(1500)
-            actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
-            time.sleep(0.01)
-        time.sleep(1.5)
-        self.tcp_socket.close()
+        with self._connect_robot_socket() as tcp_socket:
+            self.tcp_socket = tcp_socket
+            tcp_socket.sendall(str.encode(tcp_command))
+            # Block until the target TCP position is reached.
+            self._wait_for_tool_position(tcp_socket, target_pose)
+            time.sleep(1.5)
 
-    # Usually, We don't use move_c
-    # move_c is mean that the robot move circle
+    # Circular TCP motion.
     # mode 0: Unconstrained mode. Interpolate orientation from current pose to target pose (pose_to)
     #      1: Fixed mode. Keep orientation constant relative to the tangent of the circular arc (starting from current pose)
-    def move_c(self,pose_via,tool_configuration,k_acc=1,k_vel=1,r=0,mode=0):
+    def move_c_pose_rotvec(self, pose_via, tool_configuration, k_acc=1, k_vel=1, r=0, mode=0):
+        """Circular move using UR native TCP poses [x, y, z, rx, ry, rz]."""
+        return self.move_c(pose_via, tool_configuration, k_acc, k_vel, r, mode, pose_format='rotvec')
 
-        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
-        print(f"movec([{pose_via},{tool_configuration}])")
-        # command: movec([pose_via,tool_configuration],a,v,t,r)\n
+    def move_c(self,pose_via,tool_configuration,k_acc=1,k_vel=1,r=0,mode=0, pose_format='rpy'):
+        via_pose = self._pose_to_rotvec_pose(pose_via, pose_format)
+        target_pose = self._pose_to_rotvec_pose(tool_configuration, pose_format)
+
+        print(f"movec({pose_format} -> rotvec: {via_pose.tolist()}, {target_pose.tolist()})")
         tcp_command = "def process():\n"
-        tcp_command += " via_pose = rpy2rotvec([%f,%f,%f])\n" % (
-        pose_via[3],pose_via[4] ,pose_via[5] )
-        tcp_command += " tool_pose = rpy2rotvec([%f,%f,%f])\n" % (
-        tool_configuration[3], tool_configuration[4], tool_configuration[5])
-        tcp_command = f" movec([{pose_via[0]},{pose_via[1]},{pose_via[2]},via_pose[0],via_pose[1],via_pose[2]], \
-                [{tool_configuration[0]},{tool_configuration[1]},{tool_configuration[2]},tool_pose[0],tool_pose[1],tool_pose[2]], \
-                a={k_acc * self.tool_acc},v={k_vel * self.tool_vel},r={r})\n"
-        tcp_command += "end\n"   #这边好像有个错误，tcp_command应该是+=
+        tcp_command += " movec(%s,%s,a=%f,v=%f,r=%f,mode=%d)\n" % (
+            self._format_ur_pose(via_pose),
+            self._format_ur_pose(target_pose),
+            k_acc * self.tool_acc, k_vel * self.tool_vel, r, mode)
+        tcp_command += "end\n"
 
-        self.tcp_socket.send(str.encode(tcp_command))
+        with self._connect_robot_socket() as tcp_socket:
+            self.tcp_socket = tcp_socket
+            tcp_socket.sendall(str.encode(tcp_command))
+            # Block until the target TCP position is reached.
+            self._wait_for_tool_position(tcp_socket, target_pose)
+            time.sleep(1.5)
 
-        # Block until robot reaches home state
-        state_data = self.tcp_socket.recv(1500)
-        actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
-        while not all([np.abs(actual_tool_positions[j] - tool_configuration[j]) < self.tool_pose_tolerance[j] for j in range(3)]):
-            state_data = self.tcp_socket.recv(1500)
-            actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
-            time.sleep(0.01)
-        self.tcp_socket.close()
-        time.sleep(1.5)
+    def translate_base(self, delta_xyz, k_acc=1, k_vel=1, wait=True):
+        """
+        Move TCP by delta_xyz in the robot base frame while keeping orientation.
+
+        delta_xyz is in meters. The target is sent as a UR native rotvec pose.
+        """
+        delta_xyz = np.asarray(delta_xyz, dtype=np.float64).reshape(3)
+        current_pose = self.get_current_tcp_pose()
+        target_pose = np.array(current_pose, dtype=np.float64)
+        target_pose[:3] += delta_xyz
+
+        if wait:
+            self.move_l_pose_rotvec(target_pose, k_acc=k_acc, k_vel=k_vel)
+        else:
+            tcp_command = "movel(%s,a=%f,v=%f)\n" % (
+                self._format_ur_pose(target_pose), k_acc * self.tool_acc, k_vel * self.tool_vel)
+            self._send_urscript(tcp_command)
+        return target_pose
+
+    def translate_tool(self, delta_xyz_tool, k_acc=1, k_vel=1, wait=True):
+        """
+        Move TCP by delta_xyz_tool expressed in the current tool frame.
+
+        This is handy for small camera/tool-relative nudges, e.g. move forward
+        along the camera/tool z axis while keeping the same orientation.
+        """
+        delta_xyz_tool = np.asarray(delta_xyz_tool, dtype=np.float64).reshape(3)
+        current_pose = self.get_current_tcp_pose()
+        tool_rotation, _ = cv2.Rodrigues(np.asarray(current_pose[3:6], dtype=np.float64))
+        delta_xyz_base = tool_rotation @ delta_xyz_tool
+        return self.translate_base(delta_xyz_base, k_acc=k_acc, k_vel=k_vel, wait=wait)
+
+    def set_tcp(self, tcp_pose):
+        """Set TCP offset on the robot controller. tcp_pose is [x, y, z, rx, ry, rz]."""
+        tcp_pose = self._pose_to_rotvec_pose(tcp_pose, pose_format='rotvec')
+        self._send_urscript("set_tcp(%s)\n" % self._format_ur_pose(tcp_pose))
+
+    def set_payload(self, mass, cog=None):
+        """Set payload mass and optional center of gravity."""
+        if cog is None:
+            self._send_urscript("set_payload(%f)\n" % float(mass))
+            return
+        cog = np.asarray(cog, dtype=np.float64).reshape(3)
+        self._send_urscript("set_payload(%f,%s)\n" % (float(mass), self._format_ur_vector(cog)))
+
+    def stop_l(self, acc=2.0):
+        """Stop linear TCP motion."""
+        self._send_urscript("stopl(%f)\n" % float(acc))
+
+    def stop_j(self, acc=2.0):
+        """Stop joint motion."""
+        self._send_urscript("stopj(%f)\n" % float(acc))
+
+    def speed_l(self, tool_speed, acc=0.25, t=0):
+        """Send speedl([vx,vy,vz,wx,wy,wz], a, t)."""
+        tool_speed = self._to_float_pose(tool_speed)
+        self._send_urscript("speedl(%s,%f,%f)\n" % (self._format_ur_vector(tool_speed), float(acc), float(t)))
+
+    def speed_j(self, joint_speeds, acc=0.5, t=0):
+        """Send speedj([q_speed...], a, t)."""
+        joint_speeds = self._to_float_pose(joint_speeds)
+        self._send_urscript("speedj(%s,%f,%f)\n" % (self._format_ur_vector(joint_speeds), float(acc), float(t)))
 
     def go_home(self):
         self.move_j(self.home_joint_config)
@@ -320,11 +427,9 @@ class UR_Robot:
 
     # get robot current state and information
     def get_state(self):
-        self.tcp_cket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)#这边好像有个错误
-        self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
-        state_data = self.tcp_socket.recv(1500)
-        self.tcp_socket.close()
-        return state_data
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_socket:
+            tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
+            return tcp_socket.recv(1500)
     
     # get robot current joint angles and cartesian pose
     def parse_tcp_state_data(self, data, subpasckage):
@@ -343,6 +448,8 @@ class UR_Robot:
         ii = range(len(dic))
         for key, i in zip(dic, ii):
             fmtsize = struct.calcsize(dic[key])
+            if len(data) < fmtsize:
+                raise ValueError(f"Incomplete TCP state packet while reading {key}")
             data1, data = data[0:fmtsize], data[fmtsize:]
             fmt = "!" + dic[key]
             dic[key] = dic[key], struct.unpack(fmt, data1)
@@ -407,7 +514,8 @@ class UR_Robot:
         # rpy to R
         R = self.rpy2R(rpy)#先将rpy欧拉角转换成旋转矩阵R
         # R to rotating_vector
-        return self.R2rotating_vector(R)#再将旋转R转换成旋转向量
+        rotvec, _ = cv2.Rodrigues(R)
+        return rotvec.reshape(3)#再将旋转R转换成旋转向量
 
     def rpy2R(self,rpy): # [r,p,y] 单位rad
         rot_x = np.array([[1, 0, 0],
@@ -423,12 +531,8 @@ class UR_Robot:
         return R
 
     def R2rotating_vector(self,R):
-        theta = math.acos((R[0, 0] + R[1, 1] + R[2, 2] - 1) / 2)
-        print(f"theta:{theta}")
-        rx = (R[2, 1] - R[1, 2]) / (2 * math.sin(theta))
-        ry = (R[0, 2] - R[2, 0]) / (2 * math.sin(theta))
-        rz = (R[1, 0] - R[0, 1]) / (2 * math.sin(theta))
-        return np.array([rx, ry, rz]) * theta
+        rotvec, _ = cv2.Rodrigues(np.asarray(R, dtype=np.float64))
+        return rotvec.reshape(3)
 
     def R2rpy(self,R):
     # assert (isRotationMatrix(R))
@@ -468,19 +572,14 @@ class UR_Robot:
 
     def get_current_tcp_pose(self):
 
-        #获取当前 TCP（末端）位姿 [x, y, z, rx, ry, rz]，单位：米和弧度，6.1.14.50新增
+        #获取当前 TCP（末端）位姿 [x, y, z, rx, ry, rz]，单位：米和弧度
         #获得的是末端 TCP 在机器人基坐标系（base_link）下的位置
-        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_socket.connect((self.tcp_host_ip, self.tcp_port))
-
-        # 接收状态数据包
-        state_data = self.tcp_socket.recv(1500)
-
-        # 解析 TCP 位姿
-        actual_tool_positions = self.parse_tcp_state_data(state_data, 'cartesian_info')
-
-        self.tcp_socket.close()
-        return actual_tool_positions
+        with self._connect_robot_socket() as tcp_socket:
+            self.tcp_socket = tcp_socket
+            # 接收状态数据包
+            state_data = tcp_socket.recv(1500)
+            # 解析 TCP 位姿
+            return self.parse_tcp_state_data(state_data, 'cartesian_info')
 
     ## get camera data
     def get_camera_data(self):
@@ -489,7 +588,6 @@ class UR_Robot:
 
     def shutdown(self):
         """
-        25/7/22新增
         安全地关闭所有与机器人相关的资源，包括相机和夹爪。
         这个函数被设计为可以被安全地多次调用，并且能处理资源未初始化的情况。
         """
@@ -598,7 +696,7 @@ class UR_Robot:
         # go back push-home
         self.move_j_p(push_home, k_acc=1, k_vel=1)
 
-    def grasp(self, position, rpy=None, open_size=0.85, k_acc=0.8, k_vel=0.8, speed=255, force=125):#这边是不是有错误
+    def grasp(self, position, rpy=None, open_size=0.85, k_acc=0.8, k_vel=0.8, speed=255, force=125):
 
         # 判定抓取的位置是否处于工作空间
         if rpy is None:

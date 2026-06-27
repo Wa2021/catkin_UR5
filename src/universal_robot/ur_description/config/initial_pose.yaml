@@ -1,14 +1,12 @@
-# 初始关节位置配置
-# 修改为grasp位置作为启动初始位置
-# up位置保留在SRDF中可供使用
-initial_pose:
-  shoulder_pan_joint: -0.062301
-  shoulder_lift_joint: -1.632100
-  elbow_joint: 1.519933
-  wrist_1_joint: -1.523365
-  wrist_2_joint: -1.624550
-  wrist_3_joint: 3.079073
-  
-  # 夹爪关节（保持打开状态）
-  hande_left_finger_joint: 0.0
-  hande_right_finger_joint: 0.0
+# joint_state_publisher zeros used as the shared startup pose.
+# This matches the MoveIt SRDF "grasp" state for the arm.
+shoulder_pan_joint: -0.062301
+shoulder_lift_joint: -1.632100
+elbow_joint: 1.519933
+wrist_1_joint: -1.523365
+wrist_2_joint: -1.624550
+wrist_3_joint: 3.079073
+
+# Gripper joints stay open at startup.
+hande_left_finger_joint: 0.0
+hande_right_finger_joint: 0.0

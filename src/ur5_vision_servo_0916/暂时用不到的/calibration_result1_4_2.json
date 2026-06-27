@@ -1,4 +1,5 @@
 {
+    "_comment": "Device-specific calibration snapshot kept for reference; regenerate before using on a changed camera/robot setup.",
     "camera_matrix": [
         [
             627.0965375071621,

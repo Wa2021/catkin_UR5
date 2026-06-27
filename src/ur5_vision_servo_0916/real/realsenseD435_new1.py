@@ -1,5 +1,4 @@
-# RealSense D435 相机类 - 优化版本（带后台线程，避免阻塞）
-# 基于 realsenseD415_new1.py 改进，专门适配 D435 相机
+# RealSense D435 相机类：后台线程持续取帧，get_data() 返回最新缓存帧。
 
 import numpy as np
 import pyrealsense2 as rs

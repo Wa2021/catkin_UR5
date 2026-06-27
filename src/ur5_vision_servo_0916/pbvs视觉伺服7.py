@@ -188,13 +188,13 @@ def unlocked_pose_visual_servoing_final():
                 if (VISUALIZATION_ENABLED and key == ord('s')) or R_correction is None:
                     R_correction = R_obj2base.T @ R_tool2base_current
                     #旋转矩阵是正交矩阵，他的逆就是他的转置，工具相对于基坐标的旋转乘基坐标相对于标定板的旋转，得到工具相对于标定板的旋转
-                    rpy_corr = R.from_matrix(R_correction).as_euler('xyz', degrees=False)#用rpy记录下来
-                    print(f"\n[成功] 姿态基准已锁定！修正RPY: {np.round(rpy_corr, 3)}\n")
+                    rotvec_corr = R.from_matrix(R_correction).as_rotvec()
+                    print(f"\n[成功] 姿态基准已锁定！修正rotvec: {np.round(rotvec_corr, 3)}\n")
                     smoothed_target_pos = None
                     last_error = 0.0
 
                 R_tool_desired = R_obj2base @ R_correction#工具坐标系相对于基坐标系的旋转位姿
-                rpy_desired = R.from_matrix(R_tool_desired).as_euler('xyz', degrees=False)
+                rotvec_desired = R.from_matrix(R_tool_desired).as_rotvec()
 
                 # 根据期望的工具姿态，计算出期望的相机姿态
                 R_cam_desired_in_base = R_tool_desired @ T_cam2tool[:3, :3]
@@ -218,7 +218,7 @@ def unlocked_pose_visual_servoing_final():
                                 1 - POSITION_SMOOTHING_ALPHA) * smoothed_target_pos
 
                 pos = smoothed_target_pos
-                target_pose_xyzrpy = np.concatenate([pos, rpy_desired])
+                target_pose_xyzrxryrz = np.concatenate([pos, rotvec_desired])
                 error = np.linalg.norm(tcp_pose[:3] - pos)
                 #PD控制中的D
                 error_derivative = error - last_error
@@ -233,10 +233,10 @@ def unlocked_pose_visual_servoing_final():
                         control_signal = p_term + d_term
                         speed = np.clip(control_signal, MIN_SPEED, MAX_SPEED)
                         print(f"[追踪-PD] E:{error:.3f}, dE:{error_derivative:.3f}, Speed:{speed:.2f}", end='\r')
-                        print(f"[移动] 目标 Pose (xyzrpy): pos={pos.round(4)}, rpy={rpy_desired.round(3)}")
+                        print(f"[移动] 目标 Pose (xyzrxryrz): pos={pos.round(4)}, rotvec={rotvec_desired.round(3)}")
                         #input("Press Enter to continue...") # 需要单步调试时取消此行注释
                         try:
-                            robot.move_j_p_1(target_pose_xyzrpy.tolist(), k_acc=MOVE_ACCEL, k_vel=speed)
+                            robot.move_j_p_1_rotvec(target_pose_xyzrxryrz.tolist(), k_acc=MOVE_ACCEL, k_vel=speed)
                         except Exception as move_error:
                             print(f"[错误] 机器人运动失败: {move_error}")
                 else:

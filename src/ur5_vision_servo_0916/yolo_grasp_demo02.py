@@ -1,6 +1,4 @@
-#demo01只能是固定位姿的抓取，瓶子横躺在桌面上，也不一定是正对着夹爪
-# 夹爪有时候需要旋转一定角度才能正对着瓶子进行抓取,要让夹爪能够适应物体（比如横躺的瓶子）的朝向
-# 所以使用了分割模型，计算物体的掩码，然后求出最小外接矩形,从而计算出物体的主方向
+# YOLO 分割抓取实验：根据目标 mask 估计物体方向，并调整 TCP 姿态。
 import numpy as np
 import cv2
 import json
@@ -135,7 +133,6 @@ def yolo_grasping_with_debug_steps():
     # --- 1. 参数配置 ---
     ROBOT_IP = "192.168.0.1"
     CALIB_FILE = 'calibration_result1_4.json'
-    # ✅ 使用分割模型
     YOLO_MODEL_PATH = 'yolov8n-seg.pt'
     TARGET_CLASS_NAME = 'bottle'  # 你想要抓取的目标类别，例如：'bottle', 'cup'等
     GRASP_CONFIDENCE_THRESHOLD = 0.5  # YOLO检测的置信度阈值
@@ -157,12 +154,12 @@ def yolo_grasping_with_debug_steps():
         return
 
     # --- 3. 移动到初始观察位置 ---
-    #observe_pose_rpy = [-0.478, -0.0678, 0.336, 2.222, -2.22, -0.140]
-    observe_pose_rpy = np.array([-0.478, -0.0678, 0.45, 2.222, -2.22, 0.0])  # ✅ 将Yaw设为0，方便计算
+    # UR 原生 TCP 位姿 [x, y, z, rx, ry, rz]
+    observe_pose_rotvec = np.array([-0.478, -0.0678, 0.45, 2.222, -2.22, 0.0])
     print("\n[步骤 0] 移动到初始观察位置...")
-    print(f"  ==> 目标位姿 (RPY): {np.round(observe_pose_rpy, 4)}")
+    print(f"  ==> 目标位姿 (xyzrxryrz): {np.round(observe_pose_rotvec, 4)}")
     input("  请按 Enter 键继续...")
-    robot.move_j_p(observe_pose_rpy, k_acc=0.5, k_vel=0.5)
+    robot.move_j_pose_rotvec(observe_pose_rotvec, k_acc=0.5, k_vel=0.5)
     print("  ✅ 已到达观察位置。")
 
     try:
@@ -194,7 +191,7 @@ def yolo_grasping_with_debug_steps():
                             best_box = box.xyxy[0].cpu().numpy()
                             # box.xyxy 是 这个框的坐标，形状是 tensor([[x1, y1, x2, y2]]) 坐标格式是 (左上角x, 左上角y, 右下角x, 右下角y)。
 
-                            # ✅ 获取对应的掩码（需要确保分割模型有 masks）
+                            # 获取对应的掩码（需要确保分割模型有 masks）
                             if results[0].masks is not None:
                                 best_mask = results[0].masks.data[i].cpu().numpy().astype(np.uint8)
                                 # results[0].masks.data 是 每个检测框对应的掩码（二值图像）集合。
@@ -209,7 +206,7 @@ def yolo_grasping_with_debug_steps():
                     u, v = (best_box[0] + best_box[2]) / 2, (best_box[1] + best_box[3]) / 2
                     cv2.circle(display_image, (int(u), int(v)), 8, (0, 0, 255), -1)
 
-                    # ✅ 只有在掩码有效时才计算抓取角度
+                    # 只有在掩码有效时才计算抓取角度
                     grasp_angle_rad = get_grasp_angle_from_mask(best_mask, display_image)
                     grasp_angle_deg = np.rad2deg(grasp_angle_rad)  # 弧度转换成角度
                     cv2.putText(display_image, f"Angle: {grasp_angle_deg:.1f} deg",
@@ -233,7 +230,7 @@ def yolo_grasping_with_debug_steps():
                     if depth > 0:
                         target_info = {'u': u, 'v': v, 'depth': depth, 'angle_rad': grasp_angle_rad}
                         print(f"\n[锁定目标] '{TARGET_CLASS_NAME}' (置信度: {highest_conf:.2f}), 中心:({int(u)},{int(v)}), 深度:{depth:.3f}m")
-                        break  # ✅ 可以去执行后续动作了
+                        break
                     else:
                         print("[警告] 目标中心深度无效，跳过该帧！")
                         best_box = None  # 清空，防止继续误用旧框
@@ -268,8 +265,8 @@ def yolo_grasping_with_debug_steps():
             # 1. 定义基准俯视姿态
             # 这是我们希望机器人抓取时保持的基本姿态（除了绕Z轴的旋转）
             # 我们直接使用初始观察位姿的姿态部分作为基准
-            base_grasp_rpy = observe_pose_rpy[3:]
-            R_base_grasp = R.from_euler('xyz', base_grasp_rpy).as_matrix()#把欧拉角转换成旋转矩阵
+            base_grasp_rotvec = observe_pose_rotvec[3:]
+            R_base_grasp = R.from_rotvec(base_grasp_rotvec).as_matrix()
 
             # 2. 获取我们从视觉中计算出的物体旋转角度
             # grasp_angle_rad 是物体长轴与图像水平线(X轴)的夹角
@@ -312,36 +309,36 @@ def yolo_grasping_with_debug_steps():
             # 所以顺序是右乘：R_final = R_base_grasp @ R_yaw_correction
             R_final_grasp = R_base_grasp @ R_yaw_correction
 
-            # 将最终的旋转矩阵转换回RPY格式，用于发送给机器人
-            final_grasp_rpy = R.from_matrix(R_final_grasp).as_euler('xyz')
+            # 转为 UR 原生旋转向量格式，用于发送给机器人
+            final_grasp_rotvec = R.from_matrix(R_final_grasp).as_rotvec()
 
             print(f"\n[姿态计算]")
             print(f"  - 物体角度 (视觉): {np.rad2deg(object_angle_rad):.2f} 度")
             print(f"  - 工具初始Yaw角: {np.rad2deg(current_tool_yaw_rad):.2f} 度")
             print(f"  - 需要修正的Yaw角: {np.rad2deg(yaw_correction_rad):.2f} 度")
             print(f"[计算完成] 目标位置 (XYZ): {np.round(target_xyz, 4)}")
-            print(f"[计算完成] 最终姿态 (RPY): {np.round(final_grasp_rpy, 4)}")
+            print(f"[计算完成] 最终姿态 (rxryrz): {np.round(final_grasp_rotvec, 4)}")
 
 
             # --- 7. 分步执行抓取动作 ---
             # a. 移动到预抓取位置
             approach_xyz = target_xyz.copy()
             approach_xyz[2] += 0.05
-            approach_pose = np.concatenate([approach_xyz, final_grasp_rpy])
+            approach_pose = np.concatenate([approach_xyz, final_grasp_rotvec])
 
             print("\n[步骤 1] 移动到目标点上方...")
-            print(f"  ==> 目标位姿 (RPY): {np.round(approach_pose, 4)}")
+            print(f"  ==> 目标位姿 (xyzrxryrz): {np.round(approach_pose, 4)}")
             input("  请按 Enter 键继续...")
-            robot.move_j_p(approach_pose.tolist(), k_acc=0.5, k_vel=0.5)
+            robot.move_j_pose_rotvec(approach_pose.tolist(), k_acc=0.5, k_vel=0.5)
 
             # b. 垂直下降
-            grasp_pose = np.concatenate([target_xyz, final_grasp_rpy])
+            grasp_pose = np.concatenate([target_xyz, final_grasp_rotvec])
             print("\n[步骤 2] 垂直下降到抓取位置...")
-            print(f"  ==> 目标位姿 (RPY): {np.round(grasp_pose, 4)}")
+            print(f"  ==> 目标位姿 (xyzrxryrz): {np.round(grasp_pose, 4)}")
             input("  请按 Enter 键继续...")
-            robot.move_j_p(grasp_pose.tolist(), k_acc=0.2, k_vel=0.2)
+            robot.move_j_pose_rotvec(grasp_pose.tolist(), k_acc=0.2, k_vel=0.2)
 
-            # c. 执行抓取 (示例，如果需要请取消注释)
+            # c. 执行抓取
             print("\n[步骤 3] 关闭夹爪...")
             input("  请按 Enter 键继续...")
             robot.close_gripper()
@@ -350,9 +347,9 @@ def yolo_grasping_with_debug_steps():
 
             # d. 垂直上升回到预抓取位置
             print("\n[步骤 4] 垂直上升...")
-            print(f"  ==> 目标位姿 (RPY): {np.round(approach_pose, 4)}")
+            print(f"  ==> 目标位姿 (xyzrxryrz): {np.round(approach_pose, 4)}")
             input("  请按 Enter 键继续...")
-            robot.move_j_p(approach_pose.tolist(), k_acc=0.5, k_vel=0.5)
+            robot.move_j_pose_rotvec(approach_pose.tolist(), k_acc=0.5, k_vel=0.5)
             print("  ✅ 已垂直上升。")
 
             # e. 松开夹爪
@@ -362,9 +359,9 @@ def yolo_grasping_with_debug_steps():
 
             # f. 回到初始观察位置
             print("\n[步骤 6] 回到初始观察位置...")
-            print(f"  ==> 目标位姿 (RPY): {np.round(observe_pose_rpy, 4)}")
+            print(f"  ==> 目标位姿 (xyzrxryrz): {np.round(observe_pose_rotvec, 4)}")
             input("  请按 Enter 键继续...")
-            robot.move_j_p(observe_pose_rpy, k_acc=0.5, k_vel=0.5)
+            robot.move_j_pose_rotvec(observe_pose_rotvec, k_acc=0.5, k_vel=0.5)
             print("  ✅ 已回到初始位置。抓取流程结束。")
 
     except KeyboardInterrupt:

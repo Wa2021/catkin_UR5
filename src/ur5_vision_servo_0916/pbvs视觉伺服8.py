@@ -1,8 +1,7 @@
 """
-在第7版的基础上，将计算部分封装成一个独立的函数，并对主循环进行了相应的简化
-尝试解决相机图像阻塞问题，创建了一个新类，在finally那边加了几行代码
-但是还没有测试效果
+PBVS 棋盘格视觉伺服。
 
+目标位姿使用 UR 原生 [x, y, z, rx, ry, rz]，避免在控制链路中把姿态转成 RPY 再转回旋转向量。
 """
 import numpy as np
 import cv2
@@ -87,7 +86,7 @@ def compute_servoing_target(tcp_pose, rvec, tvec, P_center_in_obj, T_cam2tool,
     :param desired_distance: 期望相机与目标的距离
     :param key_pressed: 外部传入的按键值，用于触发重置
 
-    :return: (原始目标位姿[pos, rpy], 更新后的姿态修正矩阵, 用于可视化的相机系下中心点)
+    :return: (原始目标位姿[pos, rxryrz], 更新后的姿态修正矩阵, 用于可视化的相机系下中心点)
     """
     # --- 1. 构造各种变换矩阵 ---
     T_obj2cam = np.eye(4)
@@ -106,12 +105,12 @@ def compute_servoing_target(tcp_pose, rvec, tvec, P_center_in_obj, T_cam2tool,
     R_correction_updated = R_correction_current
     if R_correction_updated is None or (key_pressed is not None and key_pressed == ord('s')):
         R_correction_updated = R_obj2base.T @ R_tool2base_current
-        rpy_corr = R.from_matrix(R_correction_updated).as_euler('xyz', degrees=False)
-        print(f"\n[成功] 姿态基准已锁定/更新！修正RPY: {np.round(rpy_corr, 3)}\n")
+        rotvec_corr = R.from_matrix(R_correction_updated).as_rotvec()
+        print(f"\n[成功] 姿态基准已锁定/更新！修正rotvec: {np.round(rotvec_corr, 3)}\n")
 
     # --- 3. 计算最终的目标位姿 ---
     R_tool_desired = R_obj2base @ R_correction_updated
-    rpy_desired = R.from_matrix(R_tool_desired).as_euler('xyz', degrees=False)
+    rotvec_desired = R.from_matrix(R_tool_desired).as_rotvec()
 
     R_cam_desired_in_base = R_tool_desired @ T_cam2tool[:3, :3]
     z_axis_cam_desired_in_base = R_cam_desired_in_base[:, 2]
@@ -123,12 +122,12 @@ def compute_servoing_target(tcp_pose, rvec, tvec, P_center_in_obj, T_cam2tool,
     t_cam2tool_in_tool = T_cam2tool[:3, 3]
     pos_desired = P_cam_desired_in_base - R_tool_desired @ t_cam2tool_in_tool
 
-    raw_target_pose_xyzrpy = np.concatenate([pos_desired, rpy_desired])
+    raw_target_pose_xyzrxryrz = np.concatenate([pos_desired, rotvec_desired])
 
     # --- 4. 计算用于可视化的数据 ---
     P_center_in_cam = (T_obj2cam @ np.append(P_center_in_obj, 1))[:3]
 
-    return raw_target_pose_xyzrpy, R_correction_updated, P_center_in_cam
+    return raw_target_pose_xyzrxryrz, R_correction_updated, P_center_in_cam
 
 # =============================================================================
 #  2. 主功能函数
@@ -136,9 +135,7 @@ def compute_servoing_target(tcp_pose, rvec, tvec, P_center_in_obj, T_cam2tool,
 
 def unlocked_pose_visual_servoing_final():
     """
-    V8 最终版：重构后的高性能PD伺服
-    - 核心计算逻辑被封装到 compute_servoing_target 函数中
-    - 主循环更清晰，易于阅读和维护
+    使用 PD 控制追踪棋盘格，并通过 compute_servoing_target 计算目标 TCP 位姿。
     """
     # --- 参数配置 ---
     ROBOT_IP = "192.168.0.1"
@@ -199,7 +196,7 @@ def unlocked_pose_visual_servoing_final():
                     R_correction, DESIRED_DISTANCE, key
                 )
                 raw_target_pos = raw_target_pose[:3]
-                rpy_desired = raw_target_pose[3:]
+                rotvec_desired = raw_target_pose[3:]
 
                 # === 2. 位置平滑与PD控制 ===
                 if smoothed_target_pos is None:
@@ -210,7 +207,7 @@ def unlocked_pose_visual_servoing_final():
                                 1 - POSITION_SMOOTHING_ALPHA) * smoothed_target_pos
 
                 pos = smoothed_target_pos
-                target_pose_xyzrpy = np.concatenate([pos, rpy_desired])
+                target_pose_xyzrxryrz = np.concatenate([pos, rotvec_desired])
                 error = np.linalg.norm(tcp_pose[:3] - pos)
                 error_derivative = error - last_error
                 last_error = error
@@ -223,10 +220,10 @@ def unlocked_pose_visual_servoing_final():
                         control_signal = KP * error + KD * error_derivative
                         speed = np.clip(control_signal, MIN_SPEED, MAX_SPEED)
                         print(f"[追踪-PD] E:{error:.3f}, dE:{error_derivative:.3f}, Speed:{speed:.2f}", end='\r')
-                        print(f"[移动] 目标 Pose (xyzrpy): pos={pos.round(4)}, rpy={rpy_desired.round(3)}")
+                        print(f"[移动] 目标 Pose (xyzrxryrz): pos={pos.round(4)}, rotvec={rotvec_desired.round(3)}")
                         #input("Press Enter to continue...") # 需要单步调试时取消此行注释
                         try:
-                            robot.move_j_p_1(target_pose_xyzrpy.tolist(), k_acc=MOVE_ACCEL, k_vel=speed)
+                            robot.move_j_p_1_rotvec(target_pose_xyzrxryrz.tolist(), k_acc=MOVE_ACCEL, k_vel=speed)
                         except Exception as e:
                             print(f"[错误] 机器人运动失败: {e}")
                 else:
@@ -251,7 +248,6 @@ def unlocked_pose_visual_servoing_final():
     except KeyboardInterrupt:
         print("\n[中止] 程序已手动终止。")
     finally:
-        # ✅ 【核心修改】调用 shutdown 来安全关闭所有资源
         if 'robot' in locals():  # 确保robot对象已成功创建
             robot.shutdown()
 

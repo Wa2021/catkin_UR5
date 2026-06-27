@@ -20,6 +20,7 @@ source ~/catkin_UR5/devel/setup.bash
 roslaunch ur5_gripper_moveit_config eye_in_hand_yolo_grasp.launch
 ```
 > ✅ **启动成功标志**：RViz打开，机械臂模型加载，且终端显示 `[INFO] Snapshot controller started`.
+> 此launch默认只启动基础系统，不会启动YOLO检测器，避免与Terminal 2中的Conda环境冲突。
 
 ### 第二步：启动YOLO检测 (Terminal 2)
 此步骤启动物体识别，开始过滤点云。
@@ -33,6 +34,11 @@ rosrun ur5_gripper_moveit_config yolo_moveit_detector.py
 ```
 > ✅ **启动成功标志**：终端显示 `YOLO model loaded`，并且RViz中的Octomap障碍物开始更新（目标物体区域变空）。
 
+如需指定目标类别，可以在启动YOLO时传入私有参数：
+```bash
+rosrun ur5_gripper_moveit_config yolo_moveit_detector.py _target_objects:="['keyboard']"
+```
+
 ---
 
 ## 🛠️ 调试模式与画面冻结 (Snapshot Mode)
@@ -43,9 +49,8 @@ rosrun ur5_gripper_moveit_config yolo_moveit_detector.py
 3.  **算法调试**：固定输入数据，调试过滤算法。
 
 ### 自动冻结机制
-系统默认配置为 **8秒后自动冻结**。
-*   启动后，你有8秒时间调整相机位置。
-*   8秒后，终端提示 `Auto-freezing point cloud`，此时障碍物地图不再更新。
+YOLO版本默认使用手动冻结，避免还没启动YOLO检测器就停止点云更新。
+需要冻结时，使用下面的ROS Service手动控制。
 
 ### 手动控制指令
 你可以随时通过ROS Service控制冻结状态：
@@ -102,15 +107,18 @@ rosservice call /snapshot/clear
 ## ⚙️ 关键配置说明
 
 ### 1. 修改主要参数
-编辑文件：`src/universal_robot/ur5_gripper_moveit_config/launch/eye_in_hand_yolo_grasp.launch`
+两终端启动时，YOLO参数由 `yolo_moveit_detector.py` 节点读取，推荐在 `rosrun` 时传入。
 
 *   **target_objects**: 定义哪些物体是“目标”（不作为障碍物）。
-    ```xml
-    <rosparam param="target_objects">['keyboard']</rosparam>
+    ```bash
+    rosrun ur5_gripper_moveit_config yolo_moveit_detector.py _target_objects:="['keyboard']"
     ```
 *   **obstacle_mode**: 
     *   `blacklist`: 除目标外，其余都是障碍物（默认）。
     *   `whitelist`: 仅指定列表内的物体是障碍物。
+    ```bash
+    rosrun ur5_gripper_moveit_config yolo_moveit_detector.py _obstacle_mode:=blacklist
+    ```
 
 ### 2. 修改YOLO模型
 默认使用 `yolov8n.pt`。如需更强性能或自定义模型，请修改 `yolo_moveit_detector.py` 中的模型路径。

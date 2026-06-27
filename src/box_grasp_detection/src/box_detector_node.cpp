@@ -1,11 +1,11 @@
 #include "box_grasp_detection/box_detector.h"
+#include <iomanip>
+#include <iostream>
+#include <memory>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include "box_grasp_detection/BoxGrasp.h"
 #include "box_grasp_detection/BoxGraspArray.h"
 #include <pcl/sample_consensus/method_types.h>
@@ -20,14 +20,12 @@
 
 class BoxDetectorNode {
 public:
-    BoxDetectorNode() : tf_listener_(tf_buffer_) {
+    BoxDetectorNode() {
         ros::NodeHandle nh;
         ros::NodeHandle pnh("~");
         
         // Parameters
         pnh.param<std::string>("input_cloud_topic", input_cloud_topic_, "/camera/depth/color/points");
-        pnh.param<std::string>("output_frame", output_frame_, "camera_color_optical_frame");
-        pnh.param<double>("publish_rate", publish_rate_, 2.0);
         
         // Publishers
         grasp_pub_ = nh.advertise<box_grasp_detection::BoxGraspArray>("box_grasps", 10);
@@ -392,15 +390,10 @@ private:
     ros::Publisher grasp_pub_;
     ros::Publisher marker_pub_;
     ros::Publisher object_cloud_pub_;
-    
-    tf2_ros::Buffer tf_buffer_;
-    tf2_ros::TransformListener tf_listener_;
-    
+
     std::shared_ptr<box_grasp_detection::BoxDetector> detector_;
     
     std::string input_cloud_topic_;
-    std::string output_frame_;
-    double publish_rate_;
 };
 
 int main(int argc, char** argv) {

@@ -33,15 +33,14 @@ def verify_hand_eye_target():
     target_xyz = point_in_base[:3].flatten()
     print(f"[INFO] 相机点变换后（base系）目标位置: {target_xyz}")
 
-    # 7. 保持当前姿态：旋转向量转为欧拉角
-    _, _, _, roll, pitch, yaw = robot.rotvec_to_rpy(*tcp_pose)
-    target_pose_rpy = [target_xyz[0], target_xyz[1], target_xyz[2], roll, pitch, yaw]
+    # 7. 保持当前姿态：直接使用 UR 原生旋转向量
+    target_pose_rotvec = [target_xyz[0], target_xyz[1], target_xyz[2], *tcp_pose[3:]]
 
-    # 8. 构造目标位姿 [x, y, z, rpy]
+    # 8. 构造目标位姿 [x, y, z, rx, ry, rz]
     input("即将移动到该点，按回车继续...")
 
     # 9. 移动
-    robot.move_j_p(target_pose_rpy, k_acc=0.3, k_vel=0.3)
+    robot.move_j_pose_rotvec(target_pose_rotvec, k_acc=0.3, k_vel=0.3)
 
     # 10. 获取实际位置
     actual_pose = robot.get_current_tcp_pose()

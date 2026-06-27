@@ -11,8 +11,7 @@ import numpy as np
 import open3d as o3d
 from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import PointCloud2
-from geometry_msgs.msg import PoseStamped
-from box_grasp_detection.msg import BoxGraspArray, BoxGrasp
+from box_grasp_detection.msg import BoxGraspArray
 import sensor_msgs.point_cloud2 as pc2
 from threading import Lock, Event
 import sys
@@ -47,32 +46,16 @@ class SingleFrameGraspDetector:
             self.grasp_callback,
             queue_size=1
         )
-        
-        # 为Open3D可视化器发布所有抓取
-        self.all_grasps_pub = rospy.Publisher(
-            '/all_box_grasps',
-            BoxGraspArray,
-            queue_size=1
-        )
-        
+
         rospy.loginfo("=" * 70)
         rospy.loginfo("单帧抓取检测器已启动")
         rospy.loginfo("=" * 70)
 
-        # 性能统计
-        self._last_cloud_stamp = None
-        self._alg_start_time = None
-        self._alg_end_time = None
-
-
-    
     def cloud_callback(self, msg):
         """接收点云帧"""
         with self.lock:
             if not self.frame_received.is_set():
                 self.current_frame = msg
-                # 记录算法开始时间
-                self._alg_start_time = time.time()
                 self.frame_received.set()
                 rospy.loginfo("✓ 已接收点云帧")
     
@@ -82,10 +65,7 @@ class SingleFrameGraspDetector:
             if not self.grasps_received.is_set():
                 self.current_grasps = msg
                 self.grasps_received.set()
-                
-                # 算法结束时间（收到抓取结果）
-                self._alg_end_time = time.time()
-          
+
                 if len(msg.grasps) > 0:
                     rospy.loginfo(f"✓ 已接收 {len(msg.grasps)} 个抓取候选")
     
@@ -132,14 +112,7 @@ class SingleFrameGraspDetector:
             rospy.loginfo(f"🔍 检测到 {len(self.current_grasps.grasps)} 个物体，选择评分最高的:")
             for i, grasp in enumerate(self.current_grasps.grasps):
                 rospy.loginfo(f"   物体{i+1}: 评分={grasp.score:.3f}, 位置=({grasp.box_pose.position.x:.3f}, {grasp.box_pose.position.y:.3f}, {grasp.box_pose.position.z:.3f})")
-            
-            # 发布所有抓取给Open3D可视化器
-            rospy.loginfo(f"📡 发布所有 {len(self.current_grasps.grasps)} 个抓取给Open3D可视化器...")
-            # 注意：realtime_open3d_viz.py 订阅的是 /box_grasps，所以这里不需要额外发布
-            # 如果需要专门发布给可视化器，可以使用 self.all_grasps_pub
-            # 但目前系统架构中，box_grasp_planner.py 已经发布了 /box_grasps
-            # 所以这里我们只需要确保可视化器订阅了正确的话题即可
-            
+
             # 选择评分最高的抓取
             best_grasp = max(self.current_grasps.grasps, key=lambda g: g.score)
             rospy.loginfo(f"✅ 选择物体: 评分={best_grasp.score:.3f}")
@@ -183,20 +156,17 @@ class SingleFrameGraspDetector:
         print(f"  类型: {grasp.grasp_type}")
         print(f"  评分: {grasp.score:.3f} / 1.000")
         
-        # 修正抓取位姿（如果需要）
-        corrected_grasp = self.correct_grasp_pose(grasp)
-        
         # 抓取位姿（关键输出！）
         print(f"\n【抓取位姿 - 6D Pose】")
-        print(f"  坐标系: {corrected_grasp.grasp_pose.header.frame_id}")
+        print(f"  坐标系: {grasp.grasp_pose.header.frame_id}")
         
-        pos = corrected_grasp.grasp_pose.pose.position
+        pos = grasp.grasp_pose.pose.position
         print(f"\n  位置 (Position):")
         print(f"    X: {pos.x:.4f} m")
         print(f"    Y: {pos.y:.4f} m")
         print(f"    Z: {pos.z:.4f} m  ← 抓取点高度（应该高于盒子）")
         
-        ori = corrected_grasp.grasp_pose.pose.orientation
+        ori = grasp.grasp_pose.pose.orientation
         print(f"\n  姿态 (Orientation - Quaternion):")
         print(f"    x: {ori.x:.4f}")
         print(f"    y: {ori.y:.4f}")
@@ -219,164 +189,7 @@ class SingleFrameGraspDetector:
         print("✓ 抓取位姿已输出")
         print("=" * 70 + "\n")
         
-        # 使用修正后的抓取位姿进行可视化
-        return corrected_grasp
-    
-    def correct_grasp_pose(self, grasp):
-        """修正错误的抓取位姿"""
-        # 🔧 修改：直接使用C++发送的姿态，不再强制修改
-        # C++代码已经正确设置了抓取姿态
-        rospy.loginfo("✓ 使用C++计算的抓取姿态（不做修正）")
         return grasp
-    
-    def visualize_grasp(self, grasp):
-        """使用Open3D可视化（简化版）"""
-        try:
-            import open3d as o3d
-            from scipy.spatial.transform import Rotation
-        except ImportError:
-            rospy.logwarn("未安装Open3D，跳过可视化")
-            return
-        
-        rospy.loginfo("正在生成Open3D可视化...")
-        
-        # 转换点云
-        points = []
-        colors = []
-        for point in pc2.read_points(self.current_frame, skip_nans=True):
-            x, y, z = point[:3]
-            points.append([x, y, z])
-            if len(point) > 3:
-                rgb = point[3]
-                r = (int(rgb) >> 16) & 0xFF
-                g = (int(rgb) >> 8) & 0xFF
-                b = int(rgb) & 0xFF
-                colors.append([r/255.0, g/255.0, b/255.0])
-            else:
-                colors.append([0.5, 0.5, 0.5])
-        
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(np.array(points))
-        pcd.colors = o3d.utility.Vector3dVector(np.array(colors))
-        
-        # 创建可视化窗口
-        vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name='药盒抓取位姿检测', width=1280, height=720)
-        vis.add_geometry(pcd)
-        
-        # 1. 相机坐标系（原点）
-        camera_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
-            size=0.15, origin=[0, 0, 0]
-        )
-        vis.add_geometry(camera_frame)
-        
-        # 参考说明：相机坐标系定义
-        # X轴（红色）：指向右侧
-        # Y轴（绿色）：指向下方
-        # Z轴（蓝色）：指向场景深度（远离相机）
-        # 注意：这里没有添加参考平面，避免视觉混淆
-        
-        # 2. 药盒边界框（只显示选中的这一个）
-        box_center = np.array([
-            grasp.box_pose.position.x,
-            grasp.box_pose.position.y,
-            grasp.box_pose.position.z
-        ])
-        
-        bbox = o3d.geometry.OrientedBoundingBox()
-        bbox.center = box_center
-        bbox.extent = np.array([grasp.length, grasp.width, grasp.height])
-        
-        # 盒子朝向
-        box_quat = [grasp.box_pose.orientation.x, grasp.box_pose.orientation.y, 
-                   grasp.box_pose.orientation.z, grasp.box_pose.orientation.w]
-        try:
-            bbox.R = Rotation.from_quat(box_quat).as_matrix()
-        except:
-            bbox.R = np.eye(3)  # 如果四元数无效，使用单位矩阵
-            
-        bbox.color = [1, 0, 0]  # 红色边界框
-        vis.add_geometry(bbox)
-        
-        # 3. 抓取坐标系（使用C++发布的位姿）
-        grasp_pos = np.array([
-            grasp.grasp_pose.pose.position.x,
-            grasp.grasp_pose.pose.position.y,
-            grasp.grasp_pose.pose.position.z
-        ])
-        
-        # 从消息中读取四元数姿态（C++计算的结果）
-        grasp_quat = [
-            grasp.grasp_pose.pose.orientation.x,
-            grasp.grasp_pose.pose.orientation.y,
-            grasp.grasp_pose.pose.orientation.z,
-            grasp.grasp_pose.pose.orientation.w
-        ]
-        
-        try:
-            grasp_rot = Rotation.from_quat(grasp_quat).as_matrix()
-        except:
-            rospy.logwarn("四元数转换失败，使用单位矩阵")
-            grasp_rot = np.eye(3)
-        
-        # 抓取坐标系（绿色）
-        grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
-            size=0.12, origin=grasp_pos
-        )
-        grasp_frame.rotate(grasp_rot, center=grasp_pos)
-        vis.add_geometry(grasp_frame)
-        
-        # 4. 抓取点标记
-        grasp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-        grasp_sphere.translate(grasp_pos)
-        grasp_sphere.paint_uniform_color([0, 1, 0])  # 绿色球
-        vis.add_geometry(grasp_sphere)
-        
-        # 调试信息 - 详细位置分析
-        rospy.loginfo("=" * 50)
-        rospy.loginfo("📍 坐标系位置分析:")
-        rospy.loginfo(f"📷 相机坐标系: (0, 0, 0)")
-        rospy.loginfo(f"🤖 抓取位置: ({grasp_pos[0]:.3f}, {grasp_pos[1]:.3f}, {grasp_pos[2]:.3f})")
-        rospy.loginfo(f"📦 药盒中心: ({box_center[0]:.3f}, {box_center[1]:.3f}, {box_center[2]:.3f})")
-        rospy.loginfo(f"📏 Z轴分析:")
-        rospy.loginfo(f"   - 相机到抓取: {grasp_pos[2]:.3f}m")
-        rospy.loginfo(f"   - 相机到药盒: {box_center[2]:.3f}m") 
-        rospy.loginfo(f"   - 差值: {box_center[2] - grasp_pos[2]:.3f}m")
-        rospy.loginfo("")
-        rospy.loginfo("🎯 关键理解:")
-        rospy.loginfo("   - Z值越小 = 距离相机越近")
-        rospy.loginfo("   - 抓取点应该在药盒和相机之间")
-        rospy.loginfo(f"   - 抓取点Z({grasp_pos[2]:.3f}) vs 药盒Z({box_center[2]:.3f})")
-        
-        if grasp_pos[2] < box_center[2]:
-            rospy.loginfo("✅ 位置关系正确：抓取点更靠近相机（在药盒上方）")
-        else:
-            rospy.logerr("❌ 位置关系错误：抓取点比药盒更远（错误！）")
-        rospy.loginfo("=" * 50)
-        
-        # 设置视角
-        ctr = vis.get_view_control()
-        ctr.set_zoom(0.7)
-        
-        rospy.loginfo("=" * 70)
-        rospy.loginfo("Open3D窗口已打开 - 按 Q 关闭")
-        rospy.loginfo("")
-        rospy.loginfo("🎨 颜色说明:")
-        rospy.loginfo("  🔴 红色边界框 = 检测到的药盒")
-        rospy.loginfo("  🟢 绿色坐标系和球 = 抓取位姿")
-        rospy.loginfo("  ⚪ 白色坐标系 = 相机位置(原点)")
-        rospy.loginfo("")
-        rospy.loginfo("📐 坐标系说明:")
-        rospy.loginfo("  - 相机在原点(0,0,0)，Z轴指向场景深度方向")
-        rospy.loginfo("  - Z值越大 = 距离相机越远")
-        rospy.loginfo("  - 在眼在手系统中，相机在机械臂末端，朝下看桌面")
-        rospy.loginfo("  - 抓取点Z > 药盒Z = 抓取点在药盒上方（从机械臂角度）")
-        rospy.loginfo("=" * 70)
-        
-        vis.run()
-        vis.destroy_window()
-        
-        rospy.loginfo("可视化窗口已关闭")
     
     def run_once(self):
         """运行一次检测"""
@@ -389,16 +202,15 @@ class SingleFrameGraspDetector:
             rospy.logerr("检测失败！")
             return None
         
-        # 打印信息并获取修正后的抓取位姿
-        corrected_grasp = self.print_grasp_info(best_grasp)
+        # 打印信息并返回抓取位姿
+        selected_grasp = self.print_grasp_info(best_grasp)
         
-        # 可视化修正后的抓取位姿
         if self.visualize:
-            self.visualize_grasp(corrected_grasp)
+            self.visualize_grasp()
         
-        return corrected_grasp
+        return selected_grasp
 
-    def visualize_grasp(self, best_grasp):
+    def visualize_grasp(self):
         """使用Open3D可视化点云和所有抓取"""
         viz_start_time = time.time()
         if self.current_frame is None or self.current_grasps is None:

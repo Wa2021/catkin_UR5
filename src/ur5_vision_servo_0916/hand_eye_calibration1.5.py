@@ -1,22 +1,24 @@
-#     本次修正说明：
-#     相比于1.4 :
-#     1.使用calibrate_intrinsics.py独立标定相机的内参
-#     2.在此版本中直接加载calibrate_intrinsics.py标定的内参(还没标定)
+# 手眼标定 1.5 流程：使用 calibrate_intrinsics.py 独立标定的相机内参，
+# 再对采集到的图像逐帧 solvePnP，计算相机到末端的手眼矩阵。
+# 当前项目尚未使用 1.5 流程完成一次实际标定。
 import numpy as np
 import cv2
 import time
 from UR_Robot import UR_Robot
 import json
+import os
 
 
 class HandEyeCalibrator:
-    def __init__(self, robot_ip="192.168.0.1", pattern_size=(8, 5), square_size=0.027, use_gripper=False):
+    def __init__(self, robot_ip="192.168.0.1", pattern_size=(8, 5), square_size=0.027,
+                 use_gripper=False, intrinsics_file="camera_intrinsics.json"):
         """
         初始化手眼标定器
         :param robot_ip: UR机器人IP地址
         :param pattern_size: 标定板角点数 (宽, 高)
         :param square_size: 标定板方格大小(米)
         :param use_gripper: 是否使用机械夹爪
+        :param intrinsics_file: calibrate_intrinsics.py 生成的相机内参文件
         """
         # 安全限制
         self.safe_height = 0.3  # 安全高度（米）
@@ -43,6 +45,8 @@ class HandEyeCalibrator:
         self.robot = UR_Robot(tcp_host_ip=robot_ip, is_use_robotiq85=use_gripper)
         self.pattern_size = pattern_size
         self.square_size = square_size
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.intrinsics_file = self._resolve_path(intrinsics_file)
 
         # 初始化标定数据存储
         self.object_points = []  # 世界坐标系中的点
@@ -57,13 +61,13 @@ class HandEyeCalibrator:
         self.camera_matrix = None
         self.dist_coeffs = None
         try:
-            with open('camera_intrinsics.json', 'r') as f:
+            with open(self.intrinsics_file, 'r') as f:
                 intrinsics = json.load(f)
             self.camera_matrix = np.array(intrinsics['camera_matrix'])
             self.dist_coeffs = np.array(intrinsics['dist_coeffs'])
-            print("[成功] 已从 'camera_intrinsics.json' 加载预置相机内参。")
+            print(f"[成功] 已从 {self.intrinsics_file} 加载预置相机内参。")
         except FileNotFoundError:
-            print("\n[警告] 找不到 'camera_intrinsics.json' 文件。")
+            print(f"\n[警告] 找不到相机内参文件: {self.intrinsics_file}")
         except Exception as e:
             print(f"加载内参文件时出错: {e}")
 
@@ -72,6 +76,11 @@ class HandEyeCalibrator:
                 -0.478, -0.0678, 0.336,  # x, y, z
                 2.222, -2.22, -0.140 ) # rx, ry, rz
             )
+
+    def _resolve_path(self, path):
+        if os.path.isabs(path):
+            return path
+        return os.path.join(self.script_dir, path)
 
 
     def check_pose_safety(self, pose):
@@ -213,7 +222,6 @@ class HandEyeCalibrator:
             self.robot.move_j_p(base_pose, k_acc=0.3, k_vel=0.3)
             time.sleep(2)  # 等待机器人稳定
 
-            # —— 新增：在类初始化时定义 self.image_size = None
             # 如果从未记录过图像尺寸，在第一次 get_camera_data 时保存下来
             if not hasattr(self, 'image_size'):
                 self.image_size = None
@@ -321,19 +329,23 @@ class HandEyeCalibrator:
             raise ValueError("标定数据不足，至少需要4组有效数据。")
 
         # 检查必要的相机参数是否已加载
-        if not hasattr(self, 'camera_matrix') or not hasattr(self, 'dist_coeffs'):
-            raise AttributeError("未找到相机内参(camera_matrix)或畸变系数(dist_coeffs)。"
-                                 "请确保在初始化时已加载预标定好的内参。")
+        if self.camera_matrix is None or self.dist_coeffs is None:
+            raise RuntimeError(
+                f"未加载相机内参或畸变系数。请先运行 calibrate_intrinsics.py，"
+                f"并确认文件存在: {self.intrinsics_file}"
+            )
 
         print("\n=== 开始执行手眼标定 ===")
         print("使用预加载的相机内参进行计算...")
 
-        # --- 核心修改：不再调用 cv2.calibrateCamera() ---
-        # 我们现在需要为每一组采集到的图像数据，单独计算其位姿(rvec, tvec)
+        # 使用预加载的相机内参，为每一组采集到的图像数据单独计算其位姿(rvec, tvec)
         # 因为我们已经有了相机内参，可以使用 cv2.solvePnP 来实现
 
         rvecs = []
         tvecs = []
+        valid_object_points = []
+        valid_image_points = []
+        valid_robot_poses = []
 
         print("正在为每张图像解算位姿 (solvePnP)...")
         for i in range(len(self.object_points)):
@@ -344,12 +356,16 @@ class HandEyeCalibrator:
                 self.object_points[i],
                 self.image_points[i],
                 self.camera_matrix,  # 使用预加载的内参
-                self.dist_coeffs  # 使用预加载的畸变系数
+                self.dist_coeffs,  # 使用预加载的畸变系数
+                flags=cv2.SOLVEPNP_ITERATIVE
             )
 
             if success:
                 rvecs.append(rvec)
                 tvecs.append(tvec)
+                valid_object_points.append(self.object_points[i])
+                valid_image_points.append(self.image_points[i])
+                valid_robot_poses.append(self.robot_poses[i])
                 # print(f"  图像 {i+1}/{len(self.object_points)}... 成功")
             else:
                 print(f"  [警告] 图像 {i + 1}/{len(self.object_points)} 的位姿解算失败，将跳过此数据点。")
@@ -360,8 +376,10 @@ class HandEyeCalibrator:
         # 保存解算出的 rvecs 和 tvecs，以供后续误差计算使用
         self.rvecs = rvecs
         self.tvecs = tvecs
+        self.valid_object_points = valid_object_points
+        self.valid_image_points = valid_image_points
+        self.valid_robot_poses = valid_robot_poses
 
-        # --- 后续流程与原版完全相同 ---
         # 准备手眼标定所需的数据列表
         R_gripper2base = []
         t_gripper2base = []
@@ -376,10 +394,7 @@ class HandEyeCalibrator:
             t_target2cam.append(t_tc)
 
             # 2. 构建机器人末端到基座的变换 (Gripper -> Base)
-            # 注意：这里我们假设 self.robot_poses 列表中的姿态与成功解算的 rvecs/tvecs 是一一对应的。
-            # 如果 solvePnP 中有失败的，我们需要确保 robot_poses 也被相应地剔除了（此简化版暂未处理）。
-            # 一个更鲁棒的实现会在数据采集时就确保数据有效性。
-            pose = self.robot_poses[i]
+            pose = valid_robot_poses[i]
             R_gb, t_gb = self._pose_to_matrix(pose)
             R_gripper2base.append(R_gb)
             t_gripper2base.append(t_gb)
@@ -401,7 +416,7 @@ class HandEyeCalibrator:
         # 注意：这里的 camera_matrix 和 dist_coeffs 是我们从外部加载的
         mean_error = self._compute_calibration_error(
             self.camera_matrix, self.dist_coeffs, hand_eye_matrix,
-            self.object_points, self.image_points, self.robot_poses
+            valid_object_points, valid_image_points, valid_robot_poses
         )
 
         print(f"\n手眼标定完成!")
@@ -440,7 +455,7 @@ class HandEyeCalibrator:
 
         return total_error / total_points
 
-    def save_calibration(self, filename="calibration_result1_5_.json"):
+    def save_calibration(self, filename="calibration_result1_5.json"):
         """
         保存标定结果
         """
@@ -449,13 +464,16 @@ class HandEyeCalibrator:
         calibration_data = {
             "camera_matrix": camera_matrix.tolist(),
             "dist_coeffs": dist_coeffs.tolist(),
-            "hand_eye_matrix": hand_eye_matrix.tolist()
+            "hand_eye_matrix": hand_eye_matrix.tolist(),
+            "intrinsics_file": self.intrinsics_file,
+            "num_samples": len(getattr(self, 'valid_robot_poses', self.robot_poses))
         }
 
-        with open(filename, 'w') as f:
+        output_path = self._resolve_path(filename)
+        with open(output_path, 'w') as f:
             json.dump(calibration_data, f, indent=4)
 
-        print(f"标定结果已保存到 {filename}")
+        print(f"标定结果已保存到 {output_path}")
 
     def _pose_to_matrix(self, pose):
         """

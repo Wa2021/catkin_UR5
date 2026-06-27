@@ -10,9 +10,6 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   geometry_msgs
   visualization_msgs
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
   pcl_ros
   pcl_conversions
   message_generation
@@ -41,9 +38,6 @@ catkin_package(
     sensor_msgs
     geometry_msgs
     visualization_msgs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
     pcl_ros
     pcl_conversions
     message_runtime
@@ -75,6 +69,6 @@ install(DIRECTORY launch config
 )
 
 install(PROGRAMS
-  scripts/box_grasp_planner.py
+  scripts/single_frame_detector.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

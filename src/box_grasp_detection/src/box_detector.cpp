@@ -780,10 +780,19 @@ BoxDetector::BoxDetector()
       plane_max_iterations_(1000),
       cluster_tolerance_(0.02),
       cluster_min_size_(30),
-      cluster_max_size_(25000),
-      min_box_volume_(0.00001),  // Not used directly anymore, replaced by area check
-      max_box_volume_(0.01)
+      cluster_max_size_(25000)
 {
+    ros::NodeHandle pnh("~");
+    pnh.param("voxel_leaf_size", voxel_leaf_size_, voxel_leaf_size_);
+    pnh.param("passthrough_min_z", passthrough_min_z_, passthrough_min_z_);
+    pnh.param("passthrough_max_z", passthrough_max_z_, passthrough_max_z_);
+    pnh.param("sor_mean_k", sor_mean_k_, sor_mean_k_);
+    pnh.param("sor_stddev_mul", sor_stddev_mul_, sor_stddev_mul_);
+    pnh.param("plane_distance_threshold", plane_distance_threshold_, plane_distance_threshold_);
+    pnh.param("plane_max_iterations", plane_max_iterations_, plane_max_iterations_);
+    pnh.param("cluster_tolerance", cluster_tolerance_, cluster_tolerance_);
+    pnh.param("cluster_min_size", cluster_min_size_, cluster_min_size_);
+    pnh.param("cluster_max_size", cluster_max_size_, cluster_max_size_);
 }
 
 std::vector<OrientedBoundingBox> BoxDetector::detectBoxes(

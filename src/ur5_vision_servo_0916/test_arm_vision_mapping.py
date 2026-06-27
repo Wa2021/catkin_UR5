@@ -93,13 +93,13 @@ class ArmVisionMappingTest:
         """
         封装的移动和测量函数
         :param name: 当前移动的描述
-        :param target_pose: 目标位姿 [x, y, z, roll, pitch, yaw]
+        :param target_pose: 目标位姿 [x, y, z, rx, ry, rz]
         :param k_acc: 加速度系数
         :param k_vel: 速度系数
         """
         print(f"\n[{name}] 正在移动...")
         # 改为使用 move_j_p_1 (非阻塞发送)，避免 recv() 循环超时死锁
-        self.robot.move_j_p_1(target_pose, k_acc=k_acc, k_vel=k_vel)
+        self.robot.move_j_p_1_rotvec(target_pose, k_acc=k_acc, k_vel=k_vel)
         
         # 稳定等待
         print(f"[{name}] 指令已发送，等待 3 秒以确保机械臂运动完毕并获取最新图像...")
@@ -137,15 +137,9 @@ class ArmVisionMappingTest:
         R_tool2base, _ = cv2.Rodrigues(np.array([rx, ry, rz], dtype=float))
         R_cam2base = R_tool2base @ R_cam2tool
         
-        # 需要将其转换成 rpy 形式以给 move_j_p 使用
-        try:
-            rpy_tuple = self.robot.rotvec_to_rpy(x_base, y_base, z_base, rx, ry, rz)
-            base_pose = list(rpy_tuple)
-        except Exception as e:
-            rospy.logerr(f"位姿转换失败: {e}")
-            return
+        base_pose = [x_base, y_base, z_base, rx, ry, rz]
             
-        print(f"转换后的基准位姿 (x,y,z,r,p,y): {[round(x,3) for x in base_pose]}")
+        print(f"基准位姿 (x,y,z,rx,ry,rz): {[round(x,3) for x in base_pose]}")
         input("按下 Enter 键开始移动到基准位置（请确保安全，机械臂将真实移动!）...")
 
         def get_cam_offset_pose(dx_c, dy_c, dz_c):

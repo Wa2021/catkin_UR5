@@ -17,9 +17,6 @@
   <!-- Set execution mode for fake execution controllers -->
   <arg name="fake_execution_type" default="interpolate" />
 
-  <!-- Load initial pose configuration -->
-  <rosparam file="$(find ur_description)/config/initial_pose.yaml" command="load" />
-
   <!--
   By default, hide joint_state_publisher's GUI
 
@@ -38,26 +35,12 @@
   <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" unless="$(arg use_gui)">
     <rosparam param="source_list">[move_group/fake_controller_joint_states]</rosparam>
     <!-- Set initial joint positions to grasp pose -->
-    <rosparam param="zeros/shoulder_pan_joint">-0.062301</rosparam>
-    <rosparam param="zeros/shoulder_lift_joint">-1.632100</rosparam>
-    <rosparam param="zeros/elbow_joint">1.519933</rosparam>
-    <rosparam param="zeros/wrist_1_joint">-1.523365</rosparam>
-    <rosparam param="zeros/wrist_2_joint">-1.624550</rosparam>
-    <rosparam param="zeros/wrist_3_joint">3.079073</rosparam>
-    <rosparam param="zeros/hande_left_finger_joint">0.0</rosparam>
-    <rosparam param="zeros/hande_right_finger_joint">0.0</rosparam>
+    <rosparam command="load" file="$(find ur_description)/config/initial_pose.yaml" ns="zeros"/>
   </node>
   <node name="joint_state_publisher" pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" if="$(arg use_gui)">
     <rosparam param="source_list">[move_group/fake_controller_joint_states]</rosparam>
     <!-- Set initial joint positions to grasp pose -->
-    <rosparam param="zeros/shoulder_pan_joint">-0.062301</rosparam>
-    <rosparam param="zeros/shoulder_lift_joint">-1.632100</rosparam>
-    <rosparam param="zeros/elbow_joint">1.519933</rosparam>
-    <rosparam param="zeros/wrist_1_joint">-1.523365</rosparam>
-    <rosparam param="zeros/wrist_2_joint">-1.624550</rosparam>
-    <rosparam param="zeros/wrist_3_joint">3.079073</rosparam>
-    <rosparam param="zeros/hande_left_finger_joint">0.0</rosparam>
-    <rosparam param="zeros/hande_right_finger_joint">0.0</rosparam>
+    <rosparam command="load" file="$(find ur_description)/config/initial_pose.yaml" ns="zeros"/>
   </node>
 
   <!-- Given the published joint states, publish tf for the robot links -->

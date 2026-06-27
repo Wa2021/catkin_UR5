@@ -1,5 +1,5 @@
 """
-基于pbvs视觉伺服7的优化版本，主要改进：
+低延迟 PBVS 视觉伺服流程，主要包含：
 
 1. **相机缓冲区优化**：
    - 实现独立线程获取最新图像帧
@@ -39,7 +39,7 @@ from scipy.spatial.transform import Rotation as R
 
 
 # =============================================================================
-#  1. 优化的相机类 - 简化版本，降级处理
+#  1. 带缓存线程和直接读取兜底的相机类
 # =============================================================================
 class OptimizedCamera:
     def __init__(self, robot):
@@ -115,7 +115,7 @@ class OptimizedCamera:
                     return self.frame.copy(), self.frame_counter
                 return None, 0
         else:
-            # 降级模式：直接获取（就像版本7一样）
+            # 降级模式：绕过缓存线程，直接从机器人相机接口读取
             try:
                 color_img, _ = self.robot.get_camera_data()
                 if color_img is not None:
@@ -272,7 +272,7 @@ def compute_servoing_target_optimized(tcp_pose, rvec, tvec, P_center_in_obj, T_c
     
     # 计算期望工具姿态
     R_tool_desired = R_obj2base @ R_correction_updated
-    rpy_desired = R.from_matrix(R_tool_desired).as_euler('xyz', degrees=False)
+    rotvec_desired = R.from_matrix(R_tool_desired).as_rotvec()
     
     # 计算期望位置
     R_cam_desired_in_base = R_tool_desired @ T_cam2tool[:3, :3]
@@ -291,7 +291,7 @@ def compute_servoing_target_optimized(tcp_pose, rvec, tvec, P_center_in_obj, T_c
     # 相机坐标系下的中心点
     P_center_in_cam = (T_obj2cam @ np.append(P_center_in_obj, 1))[:3]
     
-    return np.concatenate([raw_target_pos, rpy_desired]), R_correction_updated, P_center_in_cam
+    return np.concatenate([raw_target_pos, rotvec_desired]), R_correction_updated, P_center_in_cam
 
 
 def draw_camera_center(image, camera_matrix, size=15, color=(255, 0, 0), thickness=2):
@@ -421,7 +421,7 @@ def optimized_visual_servoing():
                 )
                 
                 raw_target_pos = raw_target_pose[:3]
-                rpy_desired = raw_target_pose[3:]
+                rotvec_desired = raw_target_pose[3:]
 
                 # 位置平滑
                 if smoothed_target_pos is None:
@@ -431,7 +431,7 @@ def optimized_visual_servoing():
                                 1 - POSITION_SMOOTHING_ALPHA) * smoothed_target_pos
 
                 pos = smoothed_target_pos
-                target_pose_xyzrpy = np.concatenate([pos, rpy_desired])
+                target_pose_xyzrxryrz = np.concatenate([pos, rotvec_desired])
                 error = np.linalg.norm(tcp_pose[:3] - pos)
                 error_derivative = error - last_error
                 last_error = error
@@ -448,7 +448,7 @@ def optimized_visual_servoing():
                         print(f"[追踪-PD] E:{error:.3f}, dE:{error_derivative:.3f}, Speed:{speed:.2f}", end='\r')
                         
                         try:
-                            robot.move_j_p_1(target_pose_xyzrpy.tolist(), k_acc=MOVE_ACCEL, k_vel=speed)
+                            robot.move_j_p_1_rotvec(target_pose_xyzrxryrz.tolist(), k_acc=MOVE_ACCEL, k_vel=speed)
                         except Exception as e:
                             print(f"[错误] 机器人运动失败: {e}")
                 else:

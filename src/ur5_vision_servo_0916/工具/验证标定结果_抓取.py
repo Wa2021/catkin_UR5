@@ -16,8 +16,7 @@ T_cam2tool = np.array(calib["hand_eye_matrix"])  # 从相机坐标系 → 工具
 
 # 初始位置
 home_pose = [-0.483, -0.065, 0.297, 2.211, -2.224, -0.154]  # xyz + rotvec格式
-home_pose_rpy = robot.rotvec_to_rpy(*home_pose)
-robot.move_j_p(home_pose_rpy, k_acc=0.1, k_vel=0.1)
+robot.move_j_pose_rotvec(home_pose, k_acc=0.1, k_vel=0.1)
 
 
 print("[INFO] 等待点击图像上的点进行验证...\n")
@@ -68,11 +67,9 @@ def on_click(event, x, y, flags, param):
     error = (target_xyz - tcp_xyz) * 1000  # mm
 
     print(f"[计算位置] 相机坐标系点: ({x_cam:.3f}, {y_cam:.3f}, {z_cam:.3f}) m")
-    print(f"[转换结果] 原始目标点: {target_xyz.round(4)}")  # 修改了打印名称
+    print(f"[转换结果] 原始目标点: {target_xyz.round(4)}")
     print(f"[当前 TCP] 位姿: {tcp_xyz.round(4)}")
     print(f"[误差] (mm): {error.round(2)}")
-
-    # ==================== vvvvv 这里是新增的补偿部分 vvvvv ====================
 
     # 定义补偿向量 (x, y, z)，单位为米
     # y轴正方向偏1cm -> y + 0.01
@@ -86,8 +83,6 @@ def on_click(event, x, y, flags, param):
 
     print(f"[补偿后] 最终目标点: {target_xyz_compensated.round(4)}\n")
 
-    # ==================== ^^^^^ 这里是新增的补偿部分 ^^^^^ ====================
-
     # 当前末端姿态（保持夹爪方向不变）
     rotvec = tcp_pose[3:]
 
@@ -95,18 +90,18 @@ def on_click(event, x, y, flags, param):
     # 使用补偿后的目标点来计算预抓取位置
     approach_xyz = target_xyz_compensated.copy()
     approach_xyz[2] += 0.05
-    pose_above = robot.rotvec_to_rpy(*approach_xyz, *rotvec)
+    pose_above = [*approach_xyz, *rotvec]
 
     input("[Step 1] 即将移动到目标点上方，按 Enter 继续...")
-    robot.move_j_p(pose_above, k_acc=0.1, k_vel=0.1)
+    robot.move_j_pose_rotvec(pose_above, k_acc=0.1, k_vel=0.1)
     print("✅ 已移动到目标点上方")
 
     # === Step 2: 下降到实际抓取位置 ===
     # 使用补偿后的目标点作为抓取位置
-    pose_grasp = robot.rotvec_to_rpy(*target_xyz_compensated, *rotvec)
+    pose_grasp = [*target_xyz_compensated, *rotvec]
 
     input("[Step 2] 即将下降到目标位置，按 Enter 继续...")
-    robot.move_j_p(pose_grasp, k_acc=0.1, k_vel=0.1)
+    robot.move_j_pose_rotvec(pose_grasp, k_acc=0.1, k_vel=0.1)
     print("✅ 已到达抓取位置")
 
     # === Step 3: 执行夹爪抓取动作 ===
@@ -116,7 +111,7 @@ def on_click(event, x, y, flags, param):
 
     # === Step 4: 上升回到目标点上方 ===
     input("[Step 4] 即将上升到安全高度，按 Enter 继续...")
-    robot.move_j_p(pose_above, k_acc=0.1, k_vel=0.1)
+    robot.move_j_pose_rotvec(pose_above, k_acc=0.1, k_vel=0.1)
     print("✅ 已上升回预抓取位姿")
 
     # === Step 5: 松开夹爪 ===
@@ -126,7 +121,7 @@ def on_click(event, x, y, flags, param):
 
     # === Step 6: 回到初始位姿 ===
     input("[Step 6] 即将回到初始位姿，按 Enter 继续...")
-    robot.move_j_p(home_pose_rpy, k_acc=0.1, k_vel=0.1)
+    robot.move_j_pose_rotvec(home_pose, k_acc=0.1, k_vel=0.1)
     print("✅ 已回到初始位姿")
 
 

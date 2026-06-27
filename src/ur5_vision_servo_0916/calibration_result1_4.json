@@ -1,4 +1,5 @@
 {
+    "_comment": "Device-specific calibration for this private UR5/Realsense setup; regenerate after changing the camera mount, robot, or calibration board.",
     "camera_matrix": [
         [
             625.631392289134,

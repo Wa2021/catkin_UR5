@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-IBVS 视觉伺服节点 - ArUco 模拟 YOLO-OBB 版本
-改进版：修正坐标映射、添加死区、误差滤波
+IBVS 视觉伺服节点：使用 ArUco 模拟 YOLO-OBB 检测输入，
+包含坐标映射、死区和误差滤波。
 """
 import rospy
 import cv2

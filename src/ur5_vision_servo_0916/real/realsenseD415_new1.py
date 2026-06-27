@@ -1,4 +1,4 @@
-#原本的D415读取图像有阻塞，所以chat了一个新的
+# RealSense D415 相机类：后台线程持续取帧，get_data() 返回最新缓存帧。
 
 import numpy as np
 import pyrealsense2 as rs
@@ -13,7 +13,7 @@ class Camera(object):
         self.im_width = width
         self.fps = fps
 
-        # --- 核心修改：为后台线程准备的变量 ---
+        # 后台线程和最新帧缓存
         self.pipeline = None
         self.scale = None
         self.intrinsics = None
@@ -56,7 +56,7 @@ class Camera(object):
             # Determine depth scale
             self.scale = cfg.get_device().first_depth_sensor().get_depth_scale()
 
-            # ✅ 【优化】在这里只创建一次 align 对象
+            # Align depth frames to the color stream once and reuse the object.
             align_to = rs.stream.color
             self.align = rs.align(align_to)
 
@@ -110,8 +110,7 @@ class Camera(object):
 
     def get_data(self):
         """
-        【核心修改】这个方法现在不再直接从硬件读取数据，
-        而是快速、非阻塞地从后台线程准备好的最新帧中获取。
+        从后台线程准备好的最新帧中获取图像，避免主流程直接阻塞在硬件读取上。
         """
         if not self.running:
             print("错误：相机未运行，请先调用 start()。")
@@ -158,7 +157,7 @@ class Camera(object):
 
     def stop(self):
         """
-        一个新增的方法，用于安全地停止相机和线程。
+        安全地停止相机和后台线程。
         """
         if not self.running:
             return

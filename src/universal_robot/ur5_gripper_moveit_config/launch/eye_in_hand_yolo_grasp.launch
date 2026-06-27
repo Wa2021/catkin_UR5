@@ -4,7 +4,7 @@
   <!-- 使用方法: source /opt/ros/noetic/setup.bash && roslaunch ur5_gripper_moveit_config eye_in_hand_yolo_grasp.launch -->
   <!-- 
   系统架构（v2.0）：
-  1. snapshot_controller: 统一管理相机数据流，8秒后自动冻结
+  1. snapshot_controller: 统一管理相机数据流，默认手动冻结
   2. pointcloud_target_filter: 根据YOLO结果过滤目标物体的点云
      - 无YOLO数据时：转发原始点云（包含所有物体）
      - 有YOLO数据时：移除目标物体，仅保留障碍物点云
@@ -15,6 +15,9 @@
   1. 先启动此launch文件（基础系统）
   2. 再启动yolo_moveit_detector.py（检测功能）
   -->
+
+  <arg name="start_yolo_detector" default="false" />
+  <arg name="show_yolo_viewer" default="false" />
   
   <!-- 启动MoveIt -->
   <include file="$(find ur5_gripper_moveit_config)/launch/demo.launch" />
@@ -24,7 +27,7 @@
   
   <!-- 快照控制节点 - 管理相机数据流 -->
   <node pkg="ur5_gripper_moveit_config" type="snapshot_control.py" name="snapshot_controller" output="screen">
-    <!-- 启用自动冻结功能 - 10秒后自动停止相机数据更新 -->
+    <!-- YOLO版本默认手动冻结，避免还没启动检测器就停止点云更新 -->
     <param name="auto_freeze_enabled" value="false" />
     <param name="freeze_delay" value="10.0" />
   </node>
@@ -53,28 +56,17 @@
   <!-- 加载配置文件 -->
   <rosparam file="$(find ur5_gripper_moveit_config)/config/eye_in_hand_grasp_config.yaml" command="load" />
   
-  <!-- YOLO与MoveIt集成检测器 -->
-  <node pkg="ur5_gripper_moveit_config" type="yolo_moveit_detector.py" name="yolo_moveit_detector" output="screen">
-    <!-- YOLO模型路径 -->
+  <!-- YOLO检测器默认不在这里启动：它依赖arm_grasp环境，推荐单独rosrun。 -->
+  <node if="$(arg start_yolo_detector)" pkg="ur5_gripper_moveit_config" type="yolo_moveit_detector.py" name="yolo_moveit_detector" output="screen">
     <param name="model_path" value="$(find ur5_gripper_moveit_config)/../../../models/yolov8n.pt" />
-    
-    <!-- 基本配置 -->
     <param name="detection_confidence" value="0.5" />
-    <!-- 关闭内置自动冻结，使用snapshot_controller统一管理 -->
     <param name="enable_auto_freeze" value="false" />
-    
-    <!-- 障碍物生成模式：blacklist = 除目标物体外都是障碍物 -->
     <param name="obstacle_mode" value="blacklist" />
-    
-    <!-- 目标物体配置（不会生成障碍物） -->
     <rosparam param="target_objects">['keyboard']</rosparam>
-    
-    <!-- 可选：白名单模式下的障碍物列表（当前使用黑名单模式，此参数无效） -->
     <rosparam param="obstacle_objects">['person', 'laptop', 'book', 'chair', 'mouse', 'keyboard', 'cell phone', 'remote', 'backpack', 'cup', 'bottle', 'tv', 'monitor']</rosparam>
   </node>
-  
-  <!-- 检测结果图像查看器 -->
-  <node pkg="image_view" type="image_view" name="yolo_detection_viewer" output="screen">
+
+  <node if="$(arg show_yolo_viewer)" pkg="image_view" type="image_view" name="yolo_detection_viewer" output="screen">
     <remap from="image" to="/yolo/detection_image"/>
     <param name="autosize" value="true"/>
     <param name="window_name" value="YOLO Detection Results"/>

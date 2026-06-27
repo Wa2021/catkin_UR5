@@ -198,7 +198,6 @@ class HandEyeCalibrator:
             self.robot.move_j_p(base_pose, k_acc=0.3, k_vel=0.3)
             time.sleep(2)  # 等待机器人稳定
 
-            # —— 新增：在类初始化时定义 self.image_size = None
             # 如果从未记录过图像尺寸，在第一次 get_camera_data 时保存下来
             if not hasattr(self, 'image_size'):
                 self.image_size = None

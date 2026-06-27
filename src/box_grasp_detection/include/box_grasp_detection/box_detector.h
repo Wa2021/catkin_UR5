@@ -2,8 +2,6 @@
 #define BOX_DETECTOR_H
 
 #include <ros/ros.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <geometry_msgs/PoseStamped.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -74,9 +72,6 @@ private:
     int cluster_min_size_;
     int cluster_max_size_;
     
-    // Box filtering
-    double min_box_volume_;
-    double max_box_volume_;
 };
 
 } // namespace box_grasp_detection
